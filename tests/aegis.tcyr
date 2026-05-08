@@ -334,6 +334,177 @@ fn test_auto_release_no_timeout_set() {
     return 0;
 }
 
+# ================================================================
+# Tempfile helpers — gap noted in cyrius-port-gaps.md ("missing
+# functionality"). Inline here so tests can write/chmod/unlink
+# real files for the world-writable / empty-binary scan paths.
+# ================================================================
+fn _tmp_write(path_cstr, content_cstr, mode) {
+    var len = strlen(content_cstr);
+    file_write_all(path_cstr, content_cstr, len);
+    sys_chmod(path_cstr, mode);
+    return 0;
+}
+
+fn _tmp_unlink(path_cstr) {
+    sys_unlink(path_cstr);
+    return 0;
+}
+
+fn _findings_have_category(findings, cat_cstr) {
+    var n = vec_len(findings);
+    var i = 0;
+    while (i < n) {
+        var f = vec_get(findings, i);
+        if (streq(str_data(finding_category(f)), cat_cstr) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn test_scan_type_labels() {
+    test_group("scan_type_labels");
+    assert_streq(scan_type_label(ST_ON_INSTALL), "on_install", "on_install label");
+    assert_streq(scan_type_label(ST_ON_EXECUTE), "on_execute", "on_execute label");
+    assert_streq(scan_type_label(ST_PERIODIC),   "periodic",   "periodic label");
+    assert_streq(scan_type_label(ST_MANUAL),     "manual",     "manual label");
+    return 0;
+}
+
+fn test_scan_agent_missing_binary() {
+    test_group("scan_agent_missing_binary");
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_agent(d, "agent-m", "/nonexistent/binary");
+    assert_eq(scan_clean(r),                                   0,            "not clean");
+    assert_eq(vec_len(scan_findings(r)),                       1,            "one finding");
+    assert_eq(_findings_have_category(scan_findings(r), "missing_binary"), 1, "missing_binary present");
+    assert_eq(scan_type_of(r),                                 ST_ON_EXECUTE, "scan_type ON_EXECUTE");
+    return 0;
+}
+
+fn test_scan_agent_disabled_by_config() {
+    test_group("scan_agent_disabled_by_config");
+    var c = aegis_config_default();
+    aegis_config_set_scan_on_execute(c, 0);
+    var d = aegis_new(c);
+    var r = aegis_scan_agent(d, "agent-x", "/nonexistent/binary");
+    assert_eq(scan_clean(r),             1, "disabled scan returns clean");
+    assert_eq(vec_len(scan_findings(r)), 0, "no findings when disabled");
+    return 0;
+}
+
+fn test_scan_agent_empty_binary() {
+    test_group("scan_agent_empty_binary");
+    var path = "/tmp/aegis_empty_test";
+    _tmp_unlink(path);
+    _tmp_write(path, "", 0x1A4);  # 0o644
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_agent(d, "agent-e", path);
+    assert_eq(scan_clean(r),                                   0,            "not clean");
+    assert_eq(_findings_have_category(scan_findings(r), "empty_binary"), 1,  "empty_binary present");
+    _tmp_unlink(path);
+    return 0;
+}
+
+fn test_scan_agent_world_writable() {
+    test_group("scan_agent_world_writable");
+    var path = "/tmp/aegis_ww_test";
+    _tmp_unlink(path);
+    _tmp_write(path, "data", 0x1B6);  # 0o666
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_agent(d, "agent-w", path);
+    assert_eq(scan_clean(r),                                     0,           "not clean");
+    assert_eq(_findings_have_category(scan_findings(r), "world_writable"), 1, "world_writable present");
+    _tmp_unlink(path);
+    return 0;
+}
+
+fn test_scan_agent_clean_file() {
+    test_group("scan_agent_clean_file");
+    var path = "/tmp/aegis_clean_test";
+    _tmp_unlink(path);
+    _tmp_write(path, "binary-content", 0x1A4);  # 0o644
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_agent(d, "agent-c", path);
+    assert_eq(scan_clean(r),             1, "clean file scans clean");
+    assert_eq(vec_len(scan_findings(r)), 0, "no findings");
+    _tmp_unlink(path);
+    return 0;
+}
+
+fn test_scan_package_missing() {
+    test_group("scan_package_missing");
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_package(d, "/nonexistent/pkg.ark");
+    assert_eq(scan_clean(r),                                    0,            "not clean");
+    assert_eq(_findings_have_category(scan_findings(r), "missing_package"), 1, "missing_package present");
+    assert_eq(scan_type_of(r),                                  ST_ON_INSTALL, "scan_type ON_INSTALL");
+    return 0;
+}
+
+fn test_scan_package_disabled_by_config() {
+    test_group("scan_package_disabled_by_config");
+    var c = aegis_config_default();
+    aegis_config_set_scan_on_install(c, 0);
+    var d = aegis_new(c);
+    var r = aegis_scan_package(d, "/nonexistent/pkg.ark");
+    assert_eq(scan_clean(r),             1, "disabled scan returns clean");
+    assert_eq(vec_len(scan_findings(r)), 0, "no findings when disabled");
+    return 0;
+}
+
+fn test_scan_package_empty() {
+    test_group("scan_package_empty");
+    var path = "/tmp/aegis_empty_pkg.ark";
+    _tmp_unlink(path);
+    _tmp_write(path, "", 0x1A4);
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_package(d, path);
+    assert_eq(scan_clean(r),                                   0,            "not clean");
+    assert_eq(_findings_have_category(scan_findings(r), "empty_package"), 1, "empty_package present");
+    _tmp_unlink(path);
+    return 0;
+}
+
+fn test_scan_results_recorded_in_history() {
+    test_group("scan_results_recorded_in_history");
+    var d = aegis_new(aegis_config_default());
+    aegis_scan_agent(d, "a1", "/nonexistent/x");
+    aegis_scan_package(d, "/nonexistent/y.ark");
+    assert_eq(vec_len(aegis_scan_history(d)), 2, "two scans recorded");
+    return 0;
+}
+
+fn test_aegis_stats_empty_daemon() {
+    test_group("aegis_stats_empty_daemon");
+    var d = aegis_new(aegis_config_default());
+    var s = aegis_stats(d);
+    assert_eq(stats_total_events(s),       0, "total_events 0");
+    assert_eq(stats_unresolved_events(s),  0, "unresolved 0");
+    assert_eq(stats_quarantined_agents(s), 0, "quarantined 0");
+    assert_eq(stats_scans_completed(s),    0, "scans 0");
+    return 0;
+}
+
+fn test_aegis_stats_accuracy() {
+    test_group("aegis_stats_accuracy");
+    var d = aegis_new(aegis_config_default());
+    var e = security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW, "a");
+    aegis_report_event(d, e);
+    aegis_report_event(d, security_event_new(EV_TRUST_VIOLATION, "t", 0, THREAT_INFO, "b"));
+    aegis_resolve_event(d, str_data(event_id(e)));
+    aegis_quarantine_agent(d, "q1", "test", THREAT_HIGH);
+    aegis_scan_agent(d, "s1", "/nonexistent");
+    var s = aegis_stats(d);
+    assert_eq(stats_total_events(s),                   2, "total_events 2");
+    assert_eq(stats_unresolved_events(s),              1, "unresolved 1");
+    assert_eq(stats_quarantined_agents(s),             1, "quarantined 1");
+    assert_eq(stats_scans_completed(s),                1, "scans 1");
+    assert_eq(stats_threat_count(s, THREAT_LOW),       1, "low count 1");
+    assert_eq(stats_threat_count(s, THREAT_INFO),      1, "info count 1");
+    return 0;
+}
+
 fn test_config_auto_release_populates_entry() {
     test_group("config_auto_release_populates_entry");
     var c = aegis_config_default();
@@ -379,6 +550,18 @@ fn main() {
     test_auto_release_timeout_not_expired();
     test_auto_release_no_timeout_set();
     test_config_auto_release_populates_entry();
+    test_scan_type_labels();
+    test_scan_agent_missing_binary();
+    test_scan_agent_disabled_by_config();
+    test_scan_agent_empty_binary();
+    test_scan_agent_world_writable();
+    test_scan_agent_clean_file();
+    test_scan_package_missing();
+    test_scan_package_disabled_by_config();
+    test_scan_package_empty();
+    test_scan_results_recorded_in_history();
+    test_aegis_stats_empty_daemon();
+    test_aegis_stats_accuracy();
     return assert_summary();
 }
 

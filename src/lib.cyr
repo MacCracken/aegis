@@ -515,3 +515,259 @@ fn aegis_check_auto_releases(d) {
     }
     return released;
 }
+
+# ================================================================
+# ScanType — what triggered a scan.
+# ================================================================
+enum ScanType {
+    ST_ON_INSTALL = 0;
+    ST_ON_EXECUTE = 1;
+    ST_PERIODIC   = 2;
+    ST_MANUAL     = 3;
+}
+
+fn scan_type_label(s) {
+    if (s == ST_ON_INSTALL) { return "on_install"; }
+    if (s == ST_ON_EXECUTE) { return "on_execute"; }
+    if (s == ST_PERIODIC)   { return "periodic"; }
+    if (s == ST_MANUAL)     { return "manual"; }
+    return "unknown";
+}
+
+# ================================================================
+# SecurityFinding — 32-byte record:
+#   severity        @ 0   ThreatLevel (i64)
+#   category        @ 8   Str*
+#   description     @ 16  Str*
+#   recommendation  @ 24  Str*
+# ================================================================
+var SECURITY_FINDING_SIZE = 32;
+
+# All Str*-typed args — caller wraps cstrs via str_from when needed.
+fn finding_new(severity, category_str, description_str, recommendation_str) {
+    var f = alloc(SECURITY_FINDING_SIZE);
+    store64(f + 0,  severity);
+    store64(f + 8,  category_str);
+    store64(f + 16, description_str);
+    store64(f + 24, recommendation_str);
+    return f;
+}
+
+fn finding_severity(f)       { return load64(f + 0); }
+fn finding_category(f)       { return load64(f + 8); }
+fn finding_description(f)    { return load64(f + 16); }
+fn finding_recommendation(f) { return load64(f + 24); }
+
+# ================================================================
+# SecurityScanResult — 40-byte record:
+#   scanned_at  @ 0   epoch s (i64)
+#   target      @ 8   Str*
+#   scan_type   @ 16  ScanType (i64)
+#   findings    @ 24  vec* of SecurityFinding*
+#   clean       @ 32  i64 (0/1) — set after findings are populated
+# ================================================================
+var SCAN_RESULT_SIZE = 40;
+
+fn _scan_result_new(target_str, scan_type) {
+    var r = alloc(SCAN_RESULT_SIZE);
+    store64(r + 0,  clock_epoch_secs());
+    store64(r + 8,  target_str);
+    store64(r + 16, scan_type);
+    store64(r + 24, vec_new());
+    store64(r + 32, 1);
+    return r;
+}
+
+fn _scan_result_seal(r) {
+    var clean = 1;
+    if (vec_len(load64(r + 24)) > 0) { clean = 0; }
+    store64(r + 32, clean);
+    return r;
+}
+
+fn scan_scanned_at(r) { return load64(r + 0); }
+fn scan_target(r)     { return load64(r + 8); }
+fn scan_type_of(r)    { return load64(r + 16); }
+fn scan_findings(r)   { return load64(r + 24); }
+fn scan_clean(r)      { return load64(r + 32); }
+
+# Build "agent:<id>" or "package:<path>" target strings.
+fn _aegis_target(prefix_cstr, name_cstr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix_cstr);
+    str_builder_add_cstr(sb, name_cstr);
+    return str_builder_build(sb);
+}
+
+fn _aegis_ensure_scan_history(d) {
+    if (aegis_scan_history(d) == 0) {
+        store64(d + 24, vec_new());
+    }
+    return aegis_scan_history(d);
+}
+
+# Stat a path. Returns 1 on success and writes mode at out+0 and
+# size at out+8. Returns 0 on failure.
+fn _aegis_stat_modesize(path_cstr, out) {
+    var sb[144];
+    var rc = sys_stat(path_cstr, &sb);
+    if (rc < 0) { return 0; }
+    var mode = load64(&sb + STAT_MODE) & 0xFFFFFFFF;
+    var size = load64(&sb + STAT_SIZE);
+    store64(out,     mode);
+    store64(out + 8, size);
+    return 1;
+}
+
+# ================================================================
+# Scanning — agent binaries and package archives.
+# Mirrors rust-old's behaviour: respects config flags; missing /
+# empty / world-writable / oversized files surface as findings;
+# every result is appended to scan_history.
+# ================================================================
+fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
+    var target = _aegis_target("agent:", agent_id_cstr);
+    var result = _scan_result_new(target, ST_ON_EXECUTE);
+
+    if (aegis_config_scan_on_execute(aegis_config(d)) == 0) {
+        return _scan_result_seal(result);
+    }
+
+    var findings = scan_findings(result);
+
+    if (file_exists(binary_path_cstr) == 0) {
+        var desc_sb = str_builder_new();
+        str_builder_add_cstr(desc_sb, "Binary not found at ");
+        str_builder_add_cstr(desc_sb, binary_path_cstr);
+        vec_push(findings, finding_new(
+            THREAT_HIGH,
+            str_from("missing_binary"),
+            str_builder_build(desc_sb),
+            str_from("Verify the agent installation is complete.")));
+    } else {
+        var ms[16];
+        if (_aegis_stat_modesize(binary_path_cstr, &ms) == 1) {
+            var mode = load64(&ms);
+            var size = load64(&ms + 8);
+            if (size == 0) {
+                vec_push(findings, finding_new(
+                    THREAT_MEDIUM,
+                    str_from("empty_binary"),
+                    str_from("Agent binary is empty (0 bytes)."),
+                    str_from("Re-install the agent.")));
+            }
+            if ((mode & 2) != 0) {
+                vec_push(findings, finding_new(
+                    THREAT_HIGH,
+                    str_from("world_writable"),
+                    str_from("Agent binary is world-writable."),
+                    str_from("Fix permissions: chmod o-w on the binary.")));
+            }
+        } else {
+            vec_push(findings, finding_new(
+                THREAT_MEDIUM,
+                str_from("unreadable_metadata"),
+                str_from("Cannot read file metadata."),
+                str_from("Check file permissions and ownership.")));
+        }
+    }
+
+    _scan_result_seal(result);
+    vec_push(_aegis_ensure_scan_history(d), result);
+    return result;
+}
+
+fn aegis_scan_package(d, package_path_cstr) {
+    var target = _aegis_target("package:", package_path_cstr);
+    var result = _scan_result_new(target, ST_ON_INSTALL);
+
+    if (aegis_config_scan_on_install(aegis_config(d)) == 0) {
+        return _scan_result_seal(result);
+    }
+
+    var findings = scan_findings(result);
+
+    if (file_exists(package_path_cstr) == 0) {
+        var desc_sb = str_builder_new();
+        str_builder_add_cstr(desc_sb, "Package not found at ");
+        str_builder_add_cstr(desc_sb, package_path_cstr);
+        vec_push(findings, finding_new(
+            THREAT_HIGH,
+            str_from("missing_package"),
+            str_builder_build(desc_sb),
+            str_from("Verify download completed successfully.")));
+    } else {
+        var ms[16];
+        if (_aegis_stat_modesize(package_path_cstr, &ms) == 1) {
+            var size = load64(&ms + 8);
+            if (size == 0) {
+                vec_push(findings, finding_new(
+                    THREAT_MEDIUM,
+                    str_from("empty_package"),
+                    str_from("Package file is empty (0 bytes)."),
+                    str_from("Re-download the package.")));
+            }
+            # 500 MB threshold — informational
+            if (size > 524288000) {
+                vec_push(findings, finding_new(
+                    THREAT_LOW,
+                    str_from("large_package"),
+                    str_from("Package is very large (>500 MB)."),
+                    str_from("Review package contents for unnecessary data.")));
+            }
+        } else {
+            vec_push(findings, finding_new(
+                THREAT_MEDIUM,
+                str_from("unreadable_metadata"),
+                str_from("Cannot read package metadata."),
+                str_from("Check file permissions and download integrity.")));
+        }
+    }
+
+    _scan_result_seal(result);
+    vec_push(_aegis_ensure_scan_history(d), result);
+    return result;
+}
+
+# ================================================================
+# AegisStats — 72-byte snapshot:
+#   total_events        @ 0
+#   unresolved_events   @ 8
+#   quarantined_agents  @ 16
+#   scans_completed     @ 24
+#   threat_counts       @ 32  inline i64[5]
+# ================================================================
+var AEGIS_STATS_SIZE = 72;
+
+fn aegis_stats(d) {
+    var s = alloc(AEGIS_STATS_SIZE);
+    store64(s + 0,  aegis_total_events(d));
+    store64(s + 8,  aegis_unresolved_count(d));
+
+    var q = 0;
+    if (aegis_quarantine(d) != 0) {
+        q = vec_len(aegis_quarantined_agents(d));
+    }
+    store64(s + 16, q);
+
+    var sc = 0;
+    if (aegis_scan_history(d) != 0) {
+        sc = vec_len(aegis_scan_history(d));
+    }
+    store64(s + 24, sc);
+
+    var i = 0;
+    while (i < 5) {
+        store64(s + 32 + i * 8, aegis_threat_count(d, i));
+        i = i + 1;
+    }
+    return s;
+}
+
+fn stats_total_events(s)       { return load64(s + 0); }
+fn stats_unresolved_events(s)  { return load64(s + 8); }
+fn stats_quarantined_agents(s) { return load64(s + 16); }
+fn stats_scans_completed(s)    { return load64(s + 24); }
+fn stats_threat_count(s, level) {
+    return load64(s + 32 + level * 8);
+}
