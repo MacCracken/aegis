@@ -73,8 +73,14 @@ docs/
 ## Documentation
 
 - [`docs/development/state.md`](docs/development/state.md) — live project state (refreshed every release).
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0.
-- [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md) — Rust → Cyrius translation map; what's done, what's deferred (sakshi-full structured logging, agnostik UUIDs, JSON serde, nein firewall).
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0; remaining work for 0.9.0 / 1.0.0.
+- [`docs/adr/`](docs/adr/) — Architectural Decision Records (sentinels, cstr API boundary, integer-array threat counts, hashmap flavor, ring buffer).
+- [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md) — non-obvious cyrius-implementation constraints found during the rust → cyrius port.
+- [`bench-history.csv`](bench-history.csv) — perf baseline tracked across versions.
+
+**Local audit**: [`./scripts/audit.sh`](scripts/audit.sh) runs every CI gate one-shot — use before pushing.
+
+The only outstanding rust surface is [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref), pending [nein](https://github.com/MacCracken/nein)'s language-version bump.
 
 ## License
 

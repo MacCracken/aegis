@@ -1,10 +1,15 @@
 # Rust → Cyrius port — differences and gaps
 
-> Reference oracle: `rust-old/src/lib.rs` (1703 lines) + `rust-old/src/firewall.rs` (192 lines).
-> Toolchain target: cyrius 5.10.0. (Manifest currently pins 5.9.43 — bump or accept.)
+> Notes from doing the rust → cyrius port. Most of the rows below
+> are now historical (the port shipped in 0.5.0 and the post-parity
+> work landed across 0.6.0 – 0.8.2); kept here as an
+> implementation-constraint reference for new contributors and as
+> the canonical place to record cyrius-stdlib gotchas surfaced
+> during the port.
 >
-> Verified against `~/Repos/cyrius/lib/*.cyr` and `~/Repos/cyrius/docs/stdlib-reference.md`.
-> Verified against `~/Repos/nein/` (cyrius port v1.0.0).
+> The rust source is gone — only [`docs/reference/firewall.rs.ref`](../reference/firewall.rs.ref)
+> survives, frozen as the spec for the deferred nein integration.
+> Decision rationale lives in [`../adr/`](../adr/).
 
 ## Dependency map
 
