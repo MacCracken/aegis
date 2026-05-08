@@ -5,6 +5,13 @@ include "src/lib.cyr"
 
 fn main() {
     alloc_init();
+    # Default logging: INFO level to stderr (fd 2). sakshi's filter
+    # is `emit if msg_severity <= active_level`, with FATAL=0 .. TRACE=5,
+    # so SK_INFO (=3) emits FATAL/ERROR/WARN/INFO. Operators can
+    # switch to a file via sakshi_output_file once a config surface
+    # lands.
+    sakshi_set_level(SK_INFO);
+    sakshi_set_output_fd(2);
     println("aegis ready");
     return 0;
 }

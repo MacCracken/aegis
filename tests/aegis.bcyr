@@ -48,6 +48,7 @@ fn bench_report_event() {
 
 fn main() {
     alloc_init();
+    sakshi_set_level(SK_ERROR);                  # silence info/warn/debug + spans during bench
     _bench_setup();
 
     var b1 = bench_new("aegis_next_id");

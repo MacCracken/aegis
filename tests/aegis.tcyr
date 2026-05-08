@@ -659,6 +659,11 @@ fn test_config_auto_release_populates_entry() {
 
 fn main() {
     alloc_init();
+    # Silence aegis's structured logging during tests. SK_ERROR (=1)
+    # keeps only ERROR/FATAL emit paths active — aegis library code
+    # never calls those, so test stderr stays clean. Span tracing
+    # is gated by `_aegis_span_enter` once the level is below SK_INFO.
+    sakshi_set_level(SK_ERROR);
     test_threat_level_labels();
     test_threat_level_ordering();
     test_event_type_labels();

@@ -63,6 +63,78 @@ fn event_type_label(k) {
 }
 
 # ================================================================
+# Logging — sakshi-full structured logging.
+#
+# Each public mutating daemon entry point opens a span (call
+# context) and emits one or more logfmt-style messages:
+#     "<msg> key1=val1 key2=val2 ..."
+# Severity mapping mirrors the prior tracing! macros:
+#   sakshi_info  — events reported, releases, db-integrity findings.
+#   sakshi_warn  — auto-quarantine fires; quarantine without agent_id.
+#   sakshi_debug — agent already quarantined; scan skipped; clean DB.
+# Library code never calls sakshi_error or sakshi_fatal.
+# ================================================================
+# Spans always emit ENTER/EXIT trace lines in sakshi — they are
+# NOT gated by sakshi_set_level. Skip the calls when the active
+# level is below SK_INFO so tests and benches at SK_ERROR stay
+# quiet without needing to redirect sakshi's output fd. Sakshi's
+# severity scale is FATAL=0..TRACE=5; filter is `emit if msg_level
+# <= active_level`, so SK_ERROR (=1) means only FATAL+ERROR emit.
+fn _aegis_span_enter(name_cstr) {
+    if (sakshi_get_level() < SK_INFO) { return 0; }
+    sakshi_span_enter(name_cstr, strlen(name_cstr));
+    return 0;
+}
+
+fn _aegis_span_exit() {
+    if (sakshi_get_level() < SK_INFO) { return 0; }
+    sakshi_span_exit();
+    return 0;
+}
+
+fn _aegis_log_emit_info(sb) {
+    var msg = str_builder_build(sb);
+    sakshi_info(str_data(msg), str_len(msg));
+    return 0;
+}
+
+fn _aegis_log_emit_warn(sb) {
+    var msg = str_builder_build(sb);
+    sakshi_warn(str_data(msg), str_len(msg));
+    return 0;
+}
+
+fn _aegis_log_emit_debug(sb) {
+    var msg = str_builder_build(sb);
+    sakshi_debug(str_data(msg), str_len(msg));
+    return 0;
+}
+
+fn _aegis_log_kv_cstr(sb, key_cstr, value_cstr) {
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, key_cstr);
+    str_builder_add_cstr(sb, "=");
+    str_builder_add_cstr(sb, value_cstr);
+    return 0;
+}
+
+fn _aegis_log_kv_str(sb, key_cstr, value_str) {
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, key_cstr);
+    str_builder_add_cstr(sb, "=");
+    str_builder_add(sb, value_str);
+    return 0;
+}
+
+fn _aegis_log_kv_int(sb, key_cstr, value_int) {
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, key_cstr);
+    str_builder_add_cstr(sb, "=");
+    str_builder_add_int(sb, value_int);
+    return 0;
+}
+
+# ================================================================
 # Event ID generator — RFC 4122 v4 UUIDs via agnostik (audit-
 # reviewed getrandom + /dev/urandom fallback). Renders the 16-byte
 # UUID buffer as a 36-char hyphenated lowercase hex string.
@@ -246,7 +318,22 @@ fn _aegis_prune_events(d) {
 # Record a security event. Returns a QuarantineAction (QA_NONE if
 # the event did not trigger an auto-quarantine).
 fn aegis_report_event(d, ev) {
+    _aegis_span_enter("report_event");
+    var action = _aegis_report_event_inner(d, ev);
+    _aegis_span_exit();
+    return action;
+}
+
+fn _aegis_report_event_inner(d, ev) {
     var threat = event_threat_level(ev);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "security event reported");
+    _aegis_log_kv_str(sb,  "event_id", event_id(ev));
+    _aegis_log_kv_cstr(sb, "threat",   threat_level_label(threat));
+    _aegis_log_kv_cstr(sb, "kind",     event_type_label(event_kind(ev)));
+    _aegis_log_emit_info(sb);
+
     _aegis_inc_threat_count(d, threat);
     vec_push(aegis_events(d), ev);
     _aegis_prune_events(d);
@@ -262,18 +349,36 @@ fn aegis_report_event(d, ev) {
     if (should_q == 0) { return QA_NONE; }
 
     var aid_str = event_agent_id(ev);
-    if (aid_str == 0) { return QA_NONE; }
+    if (aid_str == 0) {
+        var sbw = str_builder_new();
+        str_builder_add_cstr(sbw, "auto-quarantine skipped: no agent_id");
+        _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
+        _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
+        _aegis_log_emit_warn(sbw);
+        return QA_NONE;
+    }
 
     var aid_cstr = str_data(aid_str);
     var qmap = _aegis_ensure_quarantine_map(d);
 
     if (map_has(qmap, aid_cstr) == 1) {
         var existing = map_get(qmap, aid_cstr);
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "agent already quarantined, linking event");
+        _aegis_log_kv_cstr(sbd, "agent_id", aid_cstr);
+        _aegis_log_kv_str(sbd,  "event_id", event_id(ev));
+        _aegis_log_emit_debug(sbd);
         vec_push(q_events(existing), event_id(ev));
         if (threat < q_threat_level(existing)) {
             q_set_threat_level(existing, threat);
         }
     } else {
+        var sbw = str_builder_new();
+        str_builder_add_cstr(sbw, "auto-quarantining agent");
+        _aegis_log_kv_cstr(sbw, "agent_id", aid_cstr);
+        _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
+        _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
+        _aegis_log_emit_warn(sbw);
         var entry = _aegis_make_quarantine_entry(d, aid_cstr, str_data(event_description(ev)), threat, event_id(ev));
         map_set(qmap, aid_cstr, entry);
     }
@@ -366,6 +471,13 @@ fn aegis_unresolved_events(d) {
 
 # Mark an event resolved by id (cstr). Returns 1 if found, 0 otherwise.
 fn aegis_resolve_event(d, event_id_cstr) {
+    _aegis_span_enter("resolve_event");
+    var rc = _aegis_resolve_event_inner(d, event_id_cstr);
+    _aegis_span_exit();
+    return rc;
+}
+
+fn _aegis_resolve_event_inner(d, event_id_cstr) {
     var events = aegis_events(d);
     var n = vec_len(events);
     var i = 0;
@@ -373,6 +485,10 @@ fn aegis_resolve_event(d, event_id_cstr) {
         var e = vec_get(events, i);
         if (streq(str_data(event_id(e)), event_id_cstr) == 1) {
             event_set_resolved(e, 1);
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "event resolved");
+            _aegis_log_kv_cstr(sb, "event_id", event_id_cstr);
+            _aegis_log_emit_debug(sb);
             return 1;
         }
         i = i + 1;
@@ -458,27 +574,58 @@ fn _aegis_ensure_quarantine_map(d) {
 # more severe, appends "; reason" to existing reason. Returns the
 # entry pointer.
 fn aegis_quarantine_agent(d, agent_id_cstr, reason_cstr, threat_level) {
+    _aegis_span_enter("quarantine_agent");
+    var entry = _aegis_quarantine_agent_inner(d, agent_id_cstr, reason_cstr, threat_level);
+    _aegis_span_exit();
+    return entry;
+}
+
+fn _aegis_quarantine_agent_inner(d, agent_id_cstr, reason_cstr, threat_level) {
     var qmap = _aegis_ensure_quarantine_map(d);
     if (map_has(qmap, agent_id_cstr) == 1) {
         var existing = map_get(qmap, agent_id_cstr);
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "agent already quarantined, updating");
+        _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+        _aegis_log_kv_cstr(sbd, "threat",   threat_level_label(threat_level));
+        _aegis_log_emit_debug(sbd);
         if (threat_level < q_threat_level(existing)) {
             q_set_threat_level(existing, threat_level);
         }
-        var sb = str_builder_new();
-        str_builder_add(sb, q_reason(existing));
-        str_builder_add_cstr(sb, "; ");
-        str_builder_add_cstr(sb, reason_cstr);
-        q_set_reason(existing, str_builder_build(sb));
+        var sbr = str_builder_new();
+        str_builder_add(sbr, q_reason(existing));
+        str_builder_add_cstr(sbr, "; ");
+        str_builder_add_cstr(sbr, reason_cstr);
+        q_set_reason(existing, str_builder_build(sbr));
         return existing;
     }
+    var sbw = str_builder_new();
+    str_builder_add_cstr(sbw, "quarantining agent");
+    _aegis_log_kv_cstr(sbw, "agent_id", agent_id_cstr);
+    _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat_level));
+    _aegis_log_emit_warn(sbw);
     var entry = _aegis_make_quarantine_entry(d, agent_id_cstr, reason_cstr, threat_level, 0);
     map_set(qmap, agent_id_cstr, entry);
     return entry;
 }
 
 fn aegis_release_agent(d, agent_id_cstr) {
+    _aegis_span_enter("release_agent");
+    var rc = _aegis_release_agent_inner(d, agent_id_cstr);
+    _aegis_span_exit();
+    return rc;
+}
+
+fn _aegis_release_agent_inner(d, agent_id_cstr) {
     if (aegis_quarantine(d) == 0) { return 0; }
-    return map_delete(aegis_quarantine(d), agent_id_cstr);
+    var rc = map_delete(aegis_quarantine(d), agent_id_cstr);
+    if (rc == 1) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "agent released from quarantine");
+        _aegis_log_kv_cstr(sb, "agent_id", agent_id_cstr);
+        _aegis_log_emit_info(sb);
+    }
+    return rc;
 }
 
 fn aegis_is_quarantined(d, agent_id_cstr) {
@@ -509,6 +656,13 @@ fn aegis_quarantined_agents(d) {
 # Release agents whose auto_release_at is in the past. Returns a
 # vec of released agent_id keys (cstr ptrs).
 fn aegis_check_auto_releases(d) {
+    _aegis_span_enter("check_auto_releases");
+    var released = _aegis_check_auto_releases_inner(d);
+    _aegis_span_exit();
+    return released;
+}
+
+fn _aegis_check_auto_releases_inner(d) {
     var released = vec_new();
     if (aegis_quarantine(d) == 0) { return released; }
     var qmap = aegis_quarantine(d);
@@ -530,7 +684,12 @@ fn aegis_check_auto_releases(d) {
     var m = vec_len(released);
     var j = 0;
     while (j < m) {
-        map_delete(qmap, vec_get(released, j));
+        var k = vec_get(released, j);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "auto-releasing agent (timeout expired)");
+        _aegis_log_kv_cstr(sb, "agent_id", k);
+        _aegis_log_emit_info(sb);
+        map_delete(qmap, k);
         j = j + 1;
     }
     return released;
@@ -646,12 +805,29 @@ fn _aegis_stat_modesize(path_cstr, out) {
 # every result is appended to scan_history.
 # ================================================================
 fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
+    _aegis_span_enter("scan_agent");
+    var r = _aegis_scan_agent_inner(d, agent_id_cstr, binary_path_cstr);
+    _aegis_span_exit();
+    return r;
+}
+
+fn _aegis_scan_agent_inner(d, agent_id_cstr, binary_path_cstr) {
     var target = _aegis_target("agent:", agent_id_cstr);
     var result = _scan_result_new(target, ST_ON_EXECUTE);
 
     if (aegis_config_scan_on_execute(aegis_config(d)) == 0) {
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "agent scan skipped (disabled in config)");
+        _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+        _aegis_log_emit_debug(sbd);
         return _scan_result_seal(result);
     }
+
+    var sbd = str_builder_new();
+    str_builder_add_cstr(sbd, "scanning agent binary");
+    _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+    _aegis_log_kv_cstr(sbd, "path",     binary_path_cstr);
+    _aegis_log_emit_debug(sbd);
 
     var findings = scan_findings(result);
 
@@ -698,12 +874,28 @@ fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
 }
 
 fn aegis_scan_package(d, package_path_cstr) {
+    _aegis_span_enter("scan_package");
+    var r = _aegis_scan_package_inner(d, package_path_cstr);
+    _aegis_span_exit();
+    return r;
+}
+
+fn _aegis_scan_package_inner(d, package_path_cstr) {
     var target = _aegis_target("package:", package_path_cstr);
     var result = _scan_result_new(target, ST_ON_INSTALL);
 
     if (aegis_config_scan_on_install(aegis_config(d)) == 0) {
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "package scan skipped (disabled in config)");
+        _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
+        _aegis_log_emit_debug(sbd);
         return _scan_result_seal(result);
     }
+
+    var sbd = str_builder_new();
+    str_builder_add_cstr(sbd, "scanning package");
+    _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
+    _aegis_log_emit_debug(sbd);
 
     var findings = scan_findings(result);
 
@@ -942,6 +1134,13 @@ fn _aegis_check_pg_socket(findings) {
 # dirs, flags world-accessible (mode & 0o007) data dirs as High,
 # flags world-writable PG socket as Medium when policy.check_socket_permissions.
 fn aegis_check_database_integrity(d, policy) {
+    _aegis_span_enter("check_database_integrity");
+    var findings = _aegis_check_database_integrity_inner(d, policy);
+    _aegis_span_exit();
+    return findings;
+}
+
+fn _aegis_check_database_integrity_inner(d, policy) {
     var findings = vec_new();
 
     _aegis_check_dbdir(findings, "PostgreSQL", dbpolicy_postgres_data_dir(policy));
@@ -953,7 +1152,6 @@ fn aegis_check_database_integrity(d, policy) {
 
     # Record the scan regardless of whether findings appeared.
     var result = _scan_result_new(str_from("database-services"), ST_PERIODIC);
-    # Splice findings into the result vec.
     var n = vec_len(findings);
     var i = 0;
     while (i < n) {
@@ -963,11 +1161,29 @@ fn aegis_check_database_integrity(d, policy) {
     _scan_result_seal(result);
     vec_push(_aegis_ensure_scan_history(d), result);
 
+    if (n > 0) {
+        var sbi = str_builder_new();
+        str_builder_add_cstr(sbi, "database integrity check found issues");
+        _aegis_log_kv_int(sbi, "findings", n);
+        _aegis_log_emit_info(sbi);
+    } else {
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "database integrity check passed");
+        _aegis_log_emit_debug(sbd);
+    }
+
     return findings;
 }
 
 # Report a DDL-audit event. agent_id_cstr may be 0 for None.
 fn aegis_audit_ddl_operation(d, agent_id_cstr, operation_cstr, object_cstr) {
+    _aegis_span_enter("audit_ddl_operation");
+    var action = _aegis_audit_ddl_operation_inner(d, agent_id_cstr, operation_cstr, object_cstr);
+    _aegis_span_exit();
+    return action;
+}
+
+fn _aegis_audit_ddl_operation_inner(d, agent_id_cstr, operation_cstr, object_cstr) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "DDL operation: ");
     str_builder_add_cstr(sb, operation_cstr);
@@ -990,6 +1206,13 @@ fn aegis_audit_ddl_operation(d, agent_id_cstr, operation_cstr, object_cstr) {
 # Report an unauthorized database access attempt. agent_id_cstr is
 # required (the call doesn't make sense without an agent).
 fn aegis_report_database_access_violation(d, agent_id_cstr, database_cstr, reason_cstr) {
+    _aegis_span_enter("report_database_access_violation");
+    var action = _aegis_report_database_access_violation_inner(d, agent_id_cstr, database_cstr, reason_cstr);
+    _aegis_span_exit();
+    return action;
+}
+
+fn _aegis_report_database_access_violation_inner(d, agent_id_cstr, database_cstr, reason_cstr) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "Unauthorized database access by agent ");
     str_builder_add_cstr(sb, agent_id_cstr);

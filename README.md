@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.6.0** — first post-parity release. 13 public records / enums and 22 daemon entry points covered by 53 test groups (155 assertions). Event IDs are real RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
+**0.7.0** — sakshi-full structured logging. Spans wrap every mutating daemon entry point; logfmt-style `"<msg> key=val key=val"` emits on the major transitions. 53 test groups / 155 assertions. Event IDs are RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
 
 ## Quick Start
 

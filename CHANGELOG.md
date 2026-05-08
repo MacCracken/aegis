@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-08
+
+**Sakshi-full structured logging.** Spans wrap every mutating daemon entry point; severity-tagged logfmt-style messages emit on the major transitions (event reported, auto-quarantine, manual quarantine, release, scan skipped/started, db-integrity findings). Cyrius pin: `5.10.0`.
+
+### Added
+
+- `sakshi` to `[deps].stdlib` (uses the bundled v2.2.3 distribution).
+- `_aegis_span_enter` / `_aegis_span_exit` wrappers — gate sakshi spans on the active level (`< SK_INFO` ⇒ skip), so tests/benches at `SK_ERROR` stay quiet without redirecting sakshi's output fd.
+- `_aegis_log_emit_{info,warn,debug}` and `_aegis_log_kv_{cstr,str,int}` helpers for logfmt-style `"<msg> key=val key=val"` construction.
+- Span + structured logging in 10 daemon entry points: `aegis_report_event`, `aegis_resolve_event`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_check_auto_releases`, `aegis_scan_agent`, `aegis_scan_package`, `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`. Each public fn is a thin trampoline: `_aegis_span_enter("…") → _<name>_inner(…) → _aegis_span_exit()` so no early-return path leaves the span stack unbalanced.
+- `src/main.cyr` initialises sakshi at `SK_INFO` to stderr (operators can switch to a file later via `sakshi_output_file` once a config surface lands).
+- Tests + benches set `sakshi_set_level(SK_ERROR)` at startup to keep stderr clean.
+
+### Severity mapping (mirrors prior tracing! macros)
+
+- `INFO` — events reported, agent released, db-integrity findings detected.
+- `WARN` — auto-quarantine fires; quarantine-severity event without `agent_id`; manual quarantine.
+- `DEBUG` — agent already quarantined (link/update); scan skipped (config disabled); scan started; db-integrity check passed.
+- Library code never calls `sakshi_error` / `sakshi_fatal`.
+
+### Notes
+
+- Sakshi v2.2.3's actual severity values are `SK_FATAL=0, SK_ERROR=1, SK_WARN=2, SK_INFO=3, SK_DEBUG=4, SK_TRACE=5` — the comment in `lib/log.cyr` showing the inverse mapping is stale for this version. Filter is `emit if msg_severity ≤ active_level`.
+- Bench impact: `aegis_report_event` ≈ 229 µs avg at `SK_ERROR` (no logging fires; the prune-and-rebuild dominates). At `SK_INFO` the per-call cost is dominated by `str_builder_*` + sakshi formatting — defer measurement until the ring-buffer perf fix lands in 0.8.x.
+- One bug worth flagging: the wrapper `_aegis_span_exit` initially recursed because of an over-broad replace-all. Fix is documented; the wrapper now correctly delegates to `sakshi_span_exit`.
+
 ## [0.6.0] — 2026-05-08
 
 **Cleanup + real UUIDs.** First post-parity slice. Cyrius pin: `5.10.0`.

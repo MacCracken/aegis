@@ -11,7 +11,7 @@ entry = "src/main.cyr"
 output = "aegis"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr", "sakshi"]
 
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
