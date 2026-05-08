@@ -69,6 +69,120 @@ fn test_event_ids_unique() {
     return 0;
 }
 
+fn test_aegis_config_defaults() {
+    test_group("aegis_config_defaults");
+    var c = aegis_config_default();
+    assert_eq(aegis_config_scan_on_install(c),             1,     "scan_on_install default true");
+    assert_eq(aegis_config_scan_on_execute(c),             1,     "scan_on_execute default true");
+    assert_eq(aegis_config_periodic_scan_interval_secs(c), 3600,  "periodic_scan_interval_secs 3600");
+    assert_eq(aegis_config_quarantine_on_critical(c),      1,     "quarantine_on_critical true");
+    assert_eq(aegis_config_quarantine_on_high(c),          1,     "quarantine_on_high true");
+    assert_eq(aegis_config_max_events(c),                  10000, "max_events 10000");
+    assert_eq(aegis_config_auto_release_timeout_secs(c),
+              AEGIS_AUTO_RELEASE_NONE,
+              "auto_release_timeout_secs None (-1)");
+    return 0;
+}
+
+fn test_aegis_new() {
+    test_group("aegis_new");
+    var d = aegis_new(aegis_config_default());
+    assert_eq(aegis_total_events(d),               0, "no events on construction");
+    assert_eq(aegis_threat_count(d, THREAT_CRITICAL), 0, "no critical counted");
+    assert_eq(aegis_threat_count(d, THREAT_INFO),     0, "no info counted");
+    return 0;
+}
+
+fn test_aegis_report_event_basic() {
+    test_group("aegis_report_event_basic");
+    var d = aegis_new(aegis_config_default());
+    var ev = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_LOW, "policy");
+    aegis_report_event(d, ev);
+    assert_eq(aegis_total_events(d),                1, "events len 1 after one report");
+    assert_eq(aegis_threat_count(d, THREAT_LOW),    1, "low count 1");
+    assert_eq(aegis_threat_count(d, THREAT_HIGH),   0, "high count untouched");
+    return 0;
+}
+
+fn test_aegis_threat_counts_per_level() {
+    test_group("aegis_threat_counts_per_level");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW,    "a"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW,    "b"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_MEDIUM, "c"));
+    assert_eq(aegis_threat_count(d, THREAT_LOW),      2, "low count 2");
+    assert_eq(aegis_threat_count(d, THREAT_MEDIUM),   1, "medium count 1");
+    assert_eq(aegis_threat_count(d, THREAT_CRITICAL), 0, "critical count 0");
+    return 0;
+}
+
+fn test_aegis_recent_events() {
+    test_group("aegis_recent_events");
+    var d = aegis_new(aegis_config_default());
+    var i = 0;
+    while (i < 5) {
+        aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_INFO, "x"));
+        i = i + 1;
+    }
+    assert_eq(vec_len(aegis_recent_events(d, 3)),  3, "recent(3) len 3");
+    assert_eq(vec_len(aegis_recent_events(d, 10)), 5, "recent(10) capped at total");
+    return 0;
+}
+
+fn test_aegis_events_for_agent() {
+    test_group("aegis_events_for_agent");
+    var d = aegis_new(aegis_config_default());
+    var alice = str_from("alice");
+    var bob   = str_from("bob");
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", alice, THREAT_LOW,  "a1"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", bob,   THREAT_LOW,  "b1"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", alice, THREAT_INFO, "a2"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0,     THREAT_INFO, "x")); # None agent
+    assert_eq(vec_len(aegis_events_for_agent(d, alice)), 2, "alice has 2 events");
+    assert_eq(vec_len(aegis_events_for_agent(d, bob)),   1, "bob has 1 event");
+    return 0;
+}
+
+fn test_aegis_events_by_threat() {
+    test_group("aegis_events_by_threat");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_MEDIUM, "a"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW,    "b"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_MEDIUM, "c"));
+    assert_eq(vec_len(aegis_events_by_threat(d, THREAT_MEDIUM)), 2, "medium events 2");
+    assert_eq(vec_len(aegis_events_by_threat(d, THREAT_LOW)),    1, "low events 1");
+    assert_eq(vec_len(aegis_events_by_threat(d, THREAT_INFO)),   0, "info events 0");
+    return 0;
+}
+
+fn test_aegis_unresolved_events_and_resolve() {
+    test_group("aegis_unresolved_events_and_resolve");
+    var d = aegis_new(aegis_config_default());
+    var e1 = security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW, "a");
+    aegis_report_event(d, e1);
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_INFO, "b"));
+    assert_eq(aegis_unresolved_count(d),               2, "2 unresolved before");
+    assert_eq(vec_len(aegis_unresolved_events(d)),     2, "2 unresolved listed");
+    assert_eq(aegis_resolve_event(d, event_id(e1)),    1, "resolve_event returns 1 on hit");
+    assert_eq(aegis_resolve_event(d, str_from("nope")), 0, "resolve_event returns 0 on miss");
+    assert_eq(aegis_unresolved_count(d),               1, "1 unresolved after");
+    return 0;
+}
+
+fn test_aegis_max_events_prunes_oldest() {
+    test_group("aegis_max_events_prunes_oldest");
+    var c = aegis_config_default();
+    aegis_config_set_max_events(c, 5);
+    var d = aegis_new(c);
+    var i = 0;
+    while (i < 8) {
+        aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_INFO, "x"));
+        i = i + 1;
+    }
+    assert_eq(aegis_total_events(d), 5, "events capped at max_events");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     test_threat_level_labels();
@@ -77,6 +191,15 @@ fn main() {
     test_security_event_new();
     test_event_set_resolved();
     test_event_ids_unique();
+    test_aegis_config_defaults();
+    test_aegis_new();
+    test_aegis_report_event_basic();
+    test_aegis_threat_counts_per_level();
+    test_aegis_recent_events();
+    test_aegis_events_for_agent();
+    test_aegis_events_by_threat();
+    test_aegis_unresolved_events_and_resolve();
+    test_aegis_max_events_prunes_oldest();
     return assert_summary();
 }
 

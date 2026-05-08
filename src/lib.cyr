@@ -115,3 +115,210 @@ fn event_metadata(e)     { return load64(e + 56); }
 fn event_resolved(e)     { return load64(e + 64); }
 
 fn event_set_resolved(e, v) { store64(e + 64, v); return 0; }
+
+# ================================================================
+# AegisConfig — 56-byte record:
+#   scan_on_install              @ 0   i64 (0/1)
+#   scan_on_execute              @ 8   i64 (0/1)
+#   periodic_scan_interval_secs  @ 16  i64
+#   quarantine_on_critical       @ 24  i64 (0/1)
+#   quarantine_on_high           @ 32  i64 (0/1)
+#   max_events                   @ 40  i64
+#   auto_release_timeout_secs    @ 48  i64; sentinel -1 means None
+#                                       (0 is a valid timeout)
+# ================================================================
+var AEGIS_CONFIG_SIZE = 56;
+var AEGIS_AUTO_RELEASE_NONE = 0 - 1;
+
+fn aegis_config_default() {
+    var c = alloc(AEGIS_CONFIG_SIZE);
+    store64(c + 0,  1);
+    store64(c + 8,  1);
+    store64(c + 16, 3600);
+    store64(c + 24, 1);
+    store64(c + 32, 1);
+    store64(c + 40, 10000);
+    store64(c + 48, AEGIS_AUTO_RELEASE_NONE);
+    return c;
+}
+
+fn aegis_config_scan_on_install(c)             { return load64(c + 0); }
+fn aegis_config_scan_on_execute(c)             { return load64(c + 8); }
+fn aegis_config_periodic_scan_interval_secs(c) { return load64(c + 16); }
+fn aegis_config_quarantine_on_critical(c)      { return load64(c + 24); }
+fn aegis_config_quarantine_on_high(c)          { return load64(c + 32); }
+fn aegis_config_max_events(c)                  { return load64(c + 40); }
+fn aegis_config_auto_release_timeout_secs(c)   { return load64(c + 48); }
+
+fn aegis_config_set_scan_on_install(c, v)             { store64(c + 0,  v); return 0; }
+fn aegis_config_set_scan_on_execute(c, v)             { store64(c + 8,  v); return 0; }
+fn aegis_config_set_periodic_scan_interval_secs(c, v) { store64(c + 16, v); return 0; }
+fn aegis_config_set_quarantine_on_critical(c, v)      { store64(c + 24, v); return 0; }
+fn aegis_config_set_quarantine_on_high(c, v)          { store64(c + 32, v); return 0; }
+fn aegis_config_set_max_events(c, v)                  { store64(c + 40, v); return 0; }
+fn aegis_config_set_auto_release_timeout_secs(c, v)   { store64(c + 48, v); return 0; }
+
+# ================================================================
+# AegisSecurityDaemon — 72-byte record:
+#   config         @ 0   AegisConfig*
+#   events         @ 8   vec* of SecurityEvent*
+#   quarantine     @ 16  map* (0 until quarantine slice lands)
+#   scan_history   @ 24  vec* (0 until scans slice lands)
+#   threat_counts  @ 32  i64[5] inline — indexed by ThreatLevel (0..4)
+#                        Total: 32 + 5*8 = 72
+# ================================================================
+var AEGIS_DAEMON_SIZE = 72;
+
+fn aegis_new(config) {
+    var d = alloc(AEGIS_DAEMON_SIZE);
+    store64(d + 0,  config);
+    store64(d + 8,  vec_new());
+    store64(d + 16, 0);
+    store64(d + 24, 0);
+    var i = 0;
+    while (i < 5) {
+        store64(d + 32 + i * 8, 0);
+        i = i + 1;
+    }
+    return d;
+}
+
+fn aegis_config(d)        { return load64(d + 0); }
+fn aegis_events(d)        { return load64(d + 8); }
+fn aegis_quarantine(d)    { return load64(d + 16); }
+fn aegis_scan_history(d)  { return load64(d + 24); }
+
+fn aegis_threat_count(d, level) {
+    return load64(d + 32 + level * 8);
+}
+
+fn _aegis_inc_threat_count(d, level) {
+    var off = d + 32 + level * 8;
+    store64(off, load64(off) + 1);
+    return 0;
+}
+
+# Prune oldest events to max_events. Builds a new vec with the kept
+# suffix — straight vec_remove(v, 0) loops would be O(n²) in the
+# drained count.
+fn _aegis_prune_events(d) {
+    var events = aegis_events(d);
+    var len = vec_len(events);
+    var max = aegis_config_max_events(aegis_config(d));
+    if (len <= max) { return 0; }
+    var start = len - max;
+    var keep = vec_new();
+    var i = start;
+    while (i < len) {
+        vec_push(keep, vec_get(events, i));
+        i = i + 1;
+    }
+    store64(d + 8, keep);
+    return 0;
+}
+
+# Record a security event. Returns 0 — auto-quarantine logic lands
+# in the quarantine slice and will return a QuarantineAction there.
+fn aegis_report_event(d, ev) {
+    _aegis_inc_threat_count(d, event_threat_level(ev));
+    vec_push(aegis_events(d), ev);
+    _aegis_prune_events(d);
+    return 0;
+}
+
+fn aegis_total_events(d) { return vec_len(aegis_events(d)); }
+
+fn aegis_unresolved_count(d) {
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var count = 0;
+    var i = 0;
+    while (i < n) {
+        if (event_resolved(vec_get(events, i)) == 0) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+# Return the most recent `count` events as a new vec.
+fn aegis_recent_events(d, count) {
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var start = 0;
+    if (n > count) { start = n - count; }
+    var out = vec_new();
+    var i = start;
+    while (i < n) {
+        vec_push(out, vec_get(events, i));
+        i = i + 1;
+    }
+    return out;
+}
+
+# Filter events by agent_id (Str*). Events whose agent_id is 0
+# (None) never match.
+fn aegis_events_for_agent(d, agent_id_str) {
+    var out = vec_new();
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        var aid = event_agent_id(e);
+        if (aid != 0) {
+            if (str_eq(aid, agent_id_str) == 1) {
+                vec_push(out, e);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn aegis_events_by_threat(d, level) {
+    var out = vec_new();
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        if (event_threat_level(e) == level) {
+            vec_push(out, e);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn aegis_unresolved_events(d) {
+    var out = vec_new();
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        if (event_resolved(e) == 0) {
+            vec_push(out, e);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+# Mark an event resolved by id. Returns 1 if found, 0 otherwise.
+fn aegis_resolve_event(d, event_id_str) {
+    var events = aegis_events(d);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        var e = vec_get(events, i);
+        if (str_eq(event_id(e), event_id_str) == 1) {
+            event_set_resolved(e, 1);
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
