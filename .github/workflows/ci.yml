@@ -35,14 +35,18 @@ jobs:
       - name: Verify toolchain
         run: cc5 --version
 
-      - name: Syntax check
-        run: |
-          for f in src/*.cyr; do
-            cyrius check "$f"
-          done
-
       - name: Resolve dependencies
         run: cyrius deps
+
+      - name: Syntax check
+        # `cyrius check` defaults to standalone — without --with-deps
+        # it can't see stdlib enums (e.g. STAT_MODE from
+        # lib/syscalls_x86_64_linux.cyr). Run after `cyrius deps` so
+        # the manifest's stdlib modules are present in lib/.
+        run: |
+          for f in src/*.cyr; do
+            cyrius check --with-deps "$f"
+          done
 
       - name: Verify dep hashes
         # Skip on the first push that introduces a new dep before
