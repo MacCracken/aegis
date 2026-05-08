@@ -878,6 +878,65 @@ fn test_security_event_json_with_metadata() {
     return 0;
 }
 
+fn test_ring_buffer_basic() {
+    test_group("ring_buffer_basic");
+    var rb = aegis_ring_new(4);
+    assert_eq(aegis_ring_cap(rb), 4, "cap");
+    assert_eq(aegis_ring_len(rb), 0, "empty len");
+    aegis_ring_push(rb, 100);
+    aegis_ring_push(rb, 200);
+    aegis_ring_push(rb, 300);
+    assert_eq(aegis_ring_len(rb),     3,   "len after 3 pushes");
+    assert_eq(aegis_ring_get(rb, 0),  100, "oldest is 100");
+    assert_eq(aegis_ring_get(rb, 1),  200, "middle is 200");
+    assert_eq(aegis_ring_get(rb, 2),  300, "newest is 300");
+    assert_eq(aegis_ring_get(rb, 99), 0,   "out-of-range returns 0");
+    return 0;
+}
+
+fn test_ring_buffer_overwrite_oldest() {
+    test_group("ring_buffer_overwrite_oldest");
+    var rb = aegis_ring_new(3);
+    aegis_ring_push(rb, 1);
+    aegis_ring_push(rb, 2);
+    aegis_ring_push(rb, 3);
+    aegis_ring_push(rb, 4);  # overwrites 1
+    aegis_ring_push(rb, 5);  # overwrites 2
+    assert_eq(aegis_ring_len(rb),    3, "stays at cap");
+    assert_eq(aegis_ring_get(rb, 0), 3, "oldest is 3");
+    assert_eq(aegis_ring_get(rb, 1), 4, "next is 4");
+    assert_eq(aegis_ring_get(rb, 2), 5, "newest is 5");
+    return 0;
+}
+
+fn test_ring_buffer_iteration_order_after_wrap() {
+    test_group("ring_buffer_iteration_order_after_wrap");
+    # cap=5, push 8 items — should retain the last 5 in order.
+    var rb = aegis_ring_new(5);
+    var i = 1;
+    while (i <= 8) {
+        aegis_ring_push(rb, i * 10);
+        i = i + 1;
+    }
+    # Expected logical order: 40, 50, 60, 70, 80
+    assert_eq(aegis_ring_len(rb),    5,  "len = cap after overflow");
+    assert_eq(aegis_ring_get(rb, 0), 40, "oldest is 40 (after 1,2,3 dropped)");
+    assert_eq(aegis_ring_get(rb, 4), 80, "newest is 80");
+    return 0;
+}
+
+fn test_ring_buffer_cap_clamp() {
+    test_group("ring_buffer_cap_clamp");
+    # Defensive clamp: cap <= 0 becomes cap = 1.
+    var rb = aegis_ring_new(0);
+    assert_eq(aegis_ring_cap(rb), 1, "cap=0 clamped to 1");
+    aegis_ring_push(rb, 42);
+    aegis_ring_push(rb, 99);
+    assert_eq(aegis_ring_len(rb),    1,  "len stays at 1");
+    assert_eq(aegis_ring_get(rb, 0), 99, "newest survives");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     # Silence aegis's structured logging during tests. SK_ERROR (=1)
@@ -954,6 +1013,10 @@ fn main() {
     test_security_event_json_roundtrip();
     test_security_event_json_no_agent_id();
     test_security_event_json_with_metadata();
+    test_ring_buffer_basic();
+    test_ring_buffer_overwrite_oldest();
+    test_ring_buffer_iteration_order_after_wrap();
+    test_ring_buffer_cap_clamp();
     return assert_summary();
 }
 

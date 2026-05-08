@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-05-08
+
+**Ring-buffer for the events log.** Replaces the v0.5–0.8 `vec*` + `_aegis_prune_events` rebuild (O(n) per push at cap) with a fixed-capacity ring (O(1) push, overwrite-oldest). `aegis_report_event` drops from **~220 µs → 4 µs avg at 50k iter** (≈ 55× speedup). Behaviour preserved: same observable order (oldest first), same drop-on-overflow semantics, same `aegis_total_events` answers.
+
+### Added
+
+- `aegis_ring_new(cap) → ring*`, `aegis_ring_push(rb, val)`, `aegis_ring_get(rb, i) → val`, `aegis_ring_len(rb)`, `aegis_ring_cap(rb)`. 32-byte header (slots/cap/head/count) + cap × 8-byte slot array. `cap <= 0` clamps to 1.
+- 4 ring-specific test groups: basic push/get, overwrite-oldest at cap, iteration order after wrap, cap clamp. Total: **256 passed / 0 failed** across 73 groups.
+
+### Changed
+
+- `AegisSecurityDaemon.events` is now `ring*` (was `vec*`). Cap is captured from `config.max_events` at `aegis_new` time — runtime changes to `max_events` don't resize an existing daemon's ring (matches typical fixed-cap-ring practice; consumers that need to resize call `aegis_new` again).
+- All callers refactored: `aegis_total_events`, `aegis_unresolved_count`, `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_report_event`. Each `vec_len`/`vec_get` became `aegis_ring_len`/`aegis_ring_get`; `vec_push + _aegis_prune_events` became single `aegis_ring_push`.
+
+### Removed
+
+- `_aegis_prune_events` — superseded by the ring's auto-overwrite. Dead code.
+
+### Notes
+
+- Memory: a daemon at default config now allocates 32 + 10000×8 = 80 KB upfront for the events ring (was: vec growing on demand). For embedded use cases on the small end, lower `max_events` before `aegis_new`.
+- `scan_history` is still a `vec` and still grows unbounded — matches the rust-old behaviour. If that becomes a memory concern in production, ring-buffering it is an isolated future change.
+
 ## [0.8.0] — 2026-05-08
 
 **JSON serde for the full record surface.** All 8 records (`SecurityEvent`, `QuarantineEntry`, `SecurityFinding`, `SecurityScanResult`, `AegisConfig`, `KernelTuningRecommendation`, `DatabaseSecurityPolicy`, `AegisStats`) gain `*_to_json` / `*_from_json` with roundtrip tests. Wire format mirrors rust-old's `serde_json` rendering. Cyrius pin: `5.10.0`.

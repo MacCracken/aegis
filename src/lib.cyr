@@ -257,11 +257,72 @@ fn aegis_config_set_max_events(c, v)                  { store64(c + 40, v); retu
 fn aegis_config_set_auto_release_timeout_secs(c, v)   { store64(c + 48, v); return 0; }
 
 # ================================================================
+# Ring buffer — fixed-capacity FIFO with O(1) push and
+# overwrite-oldest. Replaces the v0.5–0.8 `vec*` events log
+# whose `_aegis_prune_events` rebuild was O(n) per push at cap.
+#
+# Layout (32-byte header + cap × 8 byte slot array):
+#   slots @ 0   ptr to N × 8-byte slot array
+#   cap   @ 8   max population (N; clamped to >= 1 at construction)
+#   head  @ 16  index of oldest entry (0 when count == 0)
+#   count @ 24  current population (0..cap)
+# ================================================================
+var AEGIS_RING_HEADER_SIZE = 32;
+
+fn aegis_ring_new(cap) {
+    if (cap <= 0) { cap = 1; }
+    var rb = alloc(AEGIS_RING_HEADER_SIZE);
+    var slots = alloc(cap * 8);
+    store64(rb + 0,  slots);
+    store64(rb + 8,  cap);
+    store64(rb + 16, 0);
+    store64(rb + 24, 0);
+    return rb;
+}
+
+fn aegis_ring_cap(rb)    { return load64(rb + 8); }
+fn aegis_ring_len(rb)    { return load64(rb + 24); }
+fn _aegis_ring_head(rb)  { return load64(rb + 16); }
+fn _aegis_ring_slots(rb) { return load64(rb + 0); }
+
+# Push a value. If the ring is at cap, the oldest entry is
+# overwritten and head advances — same observable behaviour as
+# the prior prune-and-rebuild, with O(1) cost.
+fn aegis_ring_push(rb, val) {
+    var slots = _aegis_ring_slots(rb);
+    var cap   = aegis_ring_cap(rb);
+    var head  = _aegis_ring_head(rb);
+    var count = aegis_ring_len(rb);
+    if (count < cap) {
+        var idx = (head + count) % cap;
+        store64(slots + idx * 8, val);
+        store64(rb + 24, count + 1);
+    } else {
+        store64(slots + head * 8, val);
+        store64(rb + 16, (head + 1) % cap);
+    }
+    return 0;
+}
+
+# Get element at logical index i (0-based, oldest first). Returns
+# 0 on out-of-range — callers should bound check via aegis_ring_len.
+fn aegis_ring_get(rb, i) {
+    var count = aegis_ring_len(rb);
+    if (i < 0)      { return 0; }
+    if (i >= count) { return 0; }
+    var head = _aegis_ring_head(rb);
+    var cap  = aegis_ring_cap(rb);
+    var idx  = (head + i) % cap;
+    return load64(_aegis_ring_slots(rb) + idx * 8);
+}
+
+# ================================================================
 # AegisSecurityDaemon — 72-byte record:
 #   config         @ 0   AegisConfig*
-#   events         @ 8   vec* of SecurityEvent*
-#   quarantine     @ 16  map* (0 until quarantine slice lands)
-#   scan_history   @ 24  vec* (0 until scans slice lands)
+#   events         @ 8   ring* of SecurityEvent*
+#                        (cap = config.max_events at aegis_new time)
+#   quarantine     @ 16  map* (lazy-init on first quarantine)
+#   scan_history   @ 24  vec* (lazy-init on first scan)
 #   threat_counts  @ 32  i64[5] inline — indexed by ThreatLevel (0..4)
 #                        Total: 32 + 5*8 = 72
 # ================================================================
@@ -270,7 +331,7 @@ var AEGIS_DAEMON_SIZE = 72;
 fn aegis_new(config) {
     var d = alloc(AEGIS_DAEMON_SIZE);
     store64(d + 0,  config);
-    store64(d + 8,  vec_new());
+    store64(d + 8,  aegis_ring_new(aegis_config_max_events(config)));
     store64(d + 16, 0);
     store64(d + 24, 0);
     var i = 0;
@@ -296,25 +357,6 @@ fn _aegis_inc_threat_count(d, level) {
     return 0;
 }
 
-# Prune oldest events to max_events. Builds a new vec with the kept
-# suffix — straight vec_remove(v, 0) loops would be O(n²) in the
-# drained count.
-fn _aegis_prune_events(d) {
-    var events = aegis_events(d);
-    var len = vec_len(events);
-    var max = aegis_config_max_events(aegis_config(d));
-    if (len <= max) { return 0; }
-    var start = len - max;
-    var keep = vec_new();
-    var i = start;
-    while (i < len) {
-        vec_push(keep, vec_get(events, i));
-        i = i + 1;
-    }
-    store64(d + 8, keep);
-    return 0;
-}
-
 # Record a security event. Returns a QuarantineAction (QA_NONE if
 # the event did not trigger an auto-quarantine).
 fn aegis_report_event(d, ev) {
@@ -335,8 +377,7 @@ fn _aegis_report_event_inner(d, ev) {
     _aegis_log_emit_info(sb);
 
     _aegis_inc_threat_count(d, threat);
-    vec_push(aegis_events(d), ev);
-    _aegis_prune_events(d);
+    aegis_ring_push(aegis_events(d), ev);
 
     var config = aegis_config(d);
     var should_q = 0;
@@ -388,15 +429,15 @@ fn _aegis_report_event_inner(d, ev) {
     return QA_ISOLATE;
 }
 
-fn aegis_total_events(d) { return vec_len(aegis_events(d)); }
+fn aegis_total_events(d) { return aegis_ring_len(aegis_events(d)); }
 
 fn aegis_unresolved_count(d) {
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var count = 0;
     var i = 0;
     while (i < n) {
-        if (event_resolved(vec_get(events, i)) == 0) {
+        if (event_resolved(aegis_ring_get(events, i)) == 0) {
             count = count + 1;
         }
         i = i + 1;
@@ -407,13 +448,13 @@ fn aegis_unresolved_count(d) {
 # Return the most recent `count` events as a new vec.
 fn aegis_recent_events(d, count) {
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var start = 0;
     if (n > count) { start = n - count; }
     var out = vec_new();
     var i = start;
     while (i < n) {
-        vec_push(out, vec_get(events, i));
+        vec_push(out, aegis_ring_get(events, i));
         i = i + 1;
     }
     return out;
@@ -424,10 +465,10 @@ fn aegis_recent_events(d, count) {
 fn aegis_events_for_agent(d, agent_id_cstr) {
     var out = vec_new();
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var i = 0;
     while (i < n) {
-        var e = vec_get(events, i);
+        var e = aegis_ring_get(events, i);
         var aid_str = event_agent_id(e);
         if (aid_str != 0) {
             if (streq(str_data(aid_str), agent_id_cstr) == 1) {
@@ -442,10 +483,10 @@ fn aegis_events_for_agent(d, agent_id_cstr) {
 fn aegis_events_by_threat(d, level) {
     var out = vec_new();
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var i = 0;
     while (i < n) {
-        var e = vec_get(events, i);
+        var e = aegis_ring_get(events, i);
         if (event_threat_level(e) == level) {
             vec_push(out, e);
         }
@@ -457,10 +498,10 @@ fn aegis_events_by_threat(d, level) {
 fn aegis_unresolved_events(d) {
     var out = vec_new();
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var i = 0;
     while (i < n) {
-        var e = vec_get(events, i);
+        var e = aegis_ring_get(events, i);
         if (event_resolved(e) == 0) {
             vec_push(out, e);
         }
@@ -479,10 +520,10 @@ fn aegis_resolve_event(d, event_id_cstr) {
 
 fn _aegis_resolve_event_inner(d, event_id_cstr) {
     var events = aegis_events(d);
-    var n = vec_len(events);
+    var n = aegis_ring_len(events);
     var i = 0;
     while (i < n) {
-        var e = vec_get(events, i);
+        var e = aegis_ring_get(events, i);
         if (streq(str_data(event_id(e)), event_id_cstr) == 1) {
             event_set_resolved(e, 1);
             var sb = str_builder_new();

@@ -29,7 +29,7 @@
 | `struct SecurityFinding`, `SecurityScanResult`, `AegisConfig`, `KernelTuningRecommendation`, `DatabaseSecurityPolicy`, `AegisStats` | each a fixed-offset record with `*_new` / accessors / setters. |
 | `HashMap<String, String>` (event metadata) | cstr-keyed `map_new()` from `lib/hashmap.cyr`, values are Str ptrs. **Note:** there are two hashmap flavors — `map_new()` is cstr-keyed, `map_new_str()` is `Str`-keyed (fat-pointer keys built via `str_from`). They are NOT interchangeable: a `map_new_str()` map dispatches to `hash_str_v` which calls `str_data`/`str_len` on the key, so feeding it a cstr does `load64` on chars and segfaults silently. Pick the one that matches what callers actually pass. (Hit during the quarantine slice — agent_id keys flow through as cstrs, so `map_new()`.) |
 | `HashMap<ThreatLevel, usize>` (threat counts) | int-keyed not native — simplest is a 5-slot `var counts[40]` indexed by `threat_level` (0..4). Avoids the hash overhead and gives O(1) iteration. |
-| `Vec<SecurityEvent>` (events log) | `vec` of event-record pointers. **0.5.0 stopgap**: `_aegis_prune_events` rebuilds a new vec with the kept suffix instead of looping `vec_remove(v, 0)` (which would be O(n²) in drained count). Still O(n) per push once the cap is reached — bench shows `aegis_report_event` ≈ 220 µs avg at 50k iterations for that reason. **Planned 0.8.x fix**: ring-buffer record (head, tail, mask, slots). |
+| `Vec<SecurityEvent>` (events log) | **ring buffer** as of 0.8.1. 32-byte header (slots/cap/head/count) + cap × 8-byte slot array. O(1) push, overwrite-oldest at cap. Cap captured from `config.max_events` at `aegis_new` time. `aegis_report_event` ≈ 4 µs avg at 50k iter (was ~220 µs in 0.5–0.8). |
 | `AegisSecurityDaemon { config, events, quarantine, scan_history, threat_counts }` | 72 B record. `quarantine` is **cstr-keyed** `map_new()` (lazy-init on first quarantine), not `map_new_str()` — see hashmap-flavor caveat below. |
 
 ## Behavioral / API divergences to expect
@@ -58,7 +58,7 @@
 | Enum `*_label(t)` (Display, snake_case) for `ThreatLevel`, `SecurityEventType`, `ScanType`, `QuarantineAction` | ~80 | **done in 0.5.0** |
 | Enum `*_serde(t)` / `*_from_serde(cstr)` (PascalCase, JSON wire format) for the same four enums | ~80 | **done in 0.8.0** |
 | Per-record JSON serialize/deserialize (8 records × `*_to_json` / `*_from_json` + tree-helper layer) | ~600 | **done in 0.8.0** |
-| Ring-buffer for events log (kills the O(n) prune-and-rebuild) | ~40 | **planned 0.8.x** |
+| Ring-buffer for events log (kills the O(n) prune-and-rebuild) | ~80 | **done in 0.8.1** (`aegis_report_event` ≈ 220 µs → 4 µs at 50k iter) |
 | Real fuzz targets for the JSON parsers (currently `tests/aegis.fcyr` is a stub) | ~50 | **planned 0.8.x** |
 | ADRs for load-bearing decisions (sentinel choices, cstr API boundary, integer-array threat-counts, hashmap flavor selection) | ~200 | **planned 0.8.x** |
 
