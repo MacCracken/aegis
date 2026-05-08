@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-05-08
+
+**Polish bucket — closes the remaining 0.8.x backlog.** Real fuzz targets, ADRs for the load-bearing decisions, baseline `bench-history.csv`, and a local `scripts/audit.sh` that mirrors the CI gates. Cyrius pin: `5.10.0`. No behaviour change; the audit script is the only thing consumers see.
+
+### Added
+
+- **`tests/aegis.fcyr` rewritten** as a real fuzz harness. 1000 random-byte iterations (length-explicit `Str` from `random_bytes`, 1–2048 bytes per iter) plus ~30 curated edge-case JSON inputs (empty, `[]`, `null`, malformed objects, wrong-type fields, truncated, whitespace-only) fed to all 8 record-from-json parsers. Pass criterion: process exits 0 within the CI's 10 s timeout — measured ~1 s locally.
+- `random` to `[deps].stdlib` (for `random_bytes` from `lib/random.cyr` over `getrandom(2)`).
+- **5 ADRs** in `docs/adr/`, all Accepted:
+  - `0001` — Sentinel values for absent state (per-field `-1` / `0` / `QA_NONE`, JSON null in/out).
+  - `0002` — Cstrs at the API boundary, `Str*` in storage; convert with `str_from`/`str_data` at the seam.
+  - `0003` — Integer-array threat counts (5-slot inline) instead of an int-keyed hashmap; PascalCase string keys on the JSON wire.
+  - `0004` — `map_new()` (cstr-keyed) is the project default; `map_new_str()` is **not** used in aegis source.
+  - `0005` — Fixed-cap ring buffer for the events log; cap captured at `aegis_new` time.
+- `bench-history.csv` baseline covering 0.7.0 → 0.8.1 with the three benches (`aegis_next_id`, `security_event_new`, `aegis_report_event`). Schema: `date,version,bench,avg_ns,min_ns,max_ns,iterations,notes`. Future versions append.
+- `scripts/audit.sh` — local one-shot equivalent of `.github/workflows/ci.yml`: deps, syntax check (`--with-deps`), fmt-diff, lint, vet, DCE build, ELF magic, smoke, tests, fuzz, bench, security pattern scan, doc + version-consistency. Exits non-zero on the first failed gate.
+
+### Notes
+
+- The fuzz harness measures robustness against adversarial input (no crashes). Coverage isn't tracked — cyrius lacks coverage tooling. Each parser sees ~2k random + curated inputs per run.
+- `bench-history.csv` is hand-maintained today. A future patch (probably 0.9.x) will add a `scripts/bench.sh` that runs the bench, parses output, and appends a row automatically.
+
 ## [0.8.1] — 2026-05-08
 
 **Ring-buffer for the events log.** Replaces the v0.5–0.8 `vec*` + `_aegis_prune_events` rebuild (O(n) per push at cap) with a fixed-capacity ring (O(1) push, overwrite-oldest). `aegis_report_event` drops from **~220 µs → 4 µs avg at 50k iter** (≈ 55× speedup). Behaviour preserved: same observable order (oldest first), same drop-on-overflow semantics, same `aegis_total_events` answers.

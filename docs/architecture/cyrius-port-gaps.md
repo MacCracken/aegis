@@ -59,8 +59,9 @@
 | Enum `*_serde(t)` / `*_from_serde(cstr)` (PascalCase, JSON wire format) for the same four enums | ~80 | **done in 0.8.0** |
 | Per-record JSON serialize/deserialize (8 records × `*_to_json` / `*_from_json` + tree-helper layer) | ~600 | **done in 0.8.0** |
 | Ring-buffer for events log (kills the O(n) prune-and-rebuild) | ~80 | **done in 0.8.1** (`aegis_report_event` ≈ 220 µs → 4 µs at 50k iter) |
-| Real fuzz targets for the JSON parsers (currently `tests/aegis.fcyr` is a stub) | ~50 | **planned 0.8.x** |
-| ADRs for load-bearing decisions (sentinel choices, cstr API boundary, integer-array threat-counts, hashmap flavor selection) | ~200 | **planned 0.8.x** |
+| Real fuzz targets for the JSON parsers | ~110 | **done in 0.8.2** (`tests/aegis.fcyr` — 1000 random + curated edge-case inputs through all 8 parsers; runs ~1 s) |
+| ADRs for load-bearing decisions | ~5 ADRs | **done in 0.8.2** ([`docs/adr/`](../adr/) 0001 sentinels, 0002 cstr API boundary, 0003 integer-array threat counts, 0004 hashmap flavor, 0005 ring buffer) |
+| `scripts/audit.sh` + `bench-history.csv` | ~150 | **done in 0.8.2** |
 
 ## Toolchain / manifest fixups
 

@@ -19,4 +19,10 @@ Decisions about aegis — what we chose, the context, and the consequences we ac
 
 ## Index
 
-_No ADRs yet. Add the first as `0001-kebab-case-title.md`._
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-sentinel-values-for-absent-state.md) | Sentinel values for absent state | Accepted |
+| [0002](0002-cstr-api-boundary.md) | Cstrs at the API boundary, Str* in storage | Accepted |
+| [0003](0003-integer-array-threat-counts.md) | Integer-array threat counts (not a hashmap) | Accepted |
+| [0004](0004-hashmap-flavor-selection.md) | Hashmap flavor: `map_new()` (cstr) over `map_new_str()` (Str) | Accepted |
+| [0005](0005-fixed-cap-ring-buffer-events-log.md) | Fixed-cap ring buffer for the events log | Accepted |

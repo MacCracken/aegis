@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.8.1** — ring-buffer for the events log: `aegis_report_event` drops from ~220 µs to 4 µs avg at 50k iter (≈ 55× speedup) with the same observable behaviour. JSON serde for the full record surface (8 records, wire-compatible with rust-old's `serde_json`). Sakshi-full structured logging (spans + logfmt key=val). Event IDs are RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. **256 passed / 0 failed** across 73 test groups. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
+**0.8.2** — polish bucket. Real fuzz harness (1000 random + curated inputs across all 8 JSON parsers), 5 ADRs in [`docs/adr/`](docs/adr/), `bench-history.csv` baseline, [`scripts/audit.sh`](scripts/audit.sh) mirroring the CI gates locally. Carries forward the 0.8.1 ring-buffer perf (`aegis_report_event` ≈ 4 µs avg at 50k iter), 0.8.0 JSON serde for the full record surface, 0.7.0 sakshi-full structured logging. **256 passed / 0 failed** across 73 test groups. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
 
 ## Quick Start
 

@@ -1,14 +1,122 @@
-# aegis fuzz harness
+# aegis fuzz harness — all 8 record-from-json parsers.
+#
+# Goals:
+#   1. Feed random bytes to every parser; assert no crashes.
+#   2. Feed a curated set of malformed / edge JSON inputs to catch
+#      degenerate paths (empty input, wrong top-level type, missing
+#      required fields, type mismatches, deeply-null fields).
+#
+# Pass criterion: process exits 0 within the CI's 10 s timeout.
+# Coverage: not measured (cyrius lacks coverage tooling) — the
+# value here is robustness against adversarial / malformed input
+# rather than reaching specific code paths.
 
-fn fuzz_main(data, len) {
-    if (len == 0) { return 0; }
+include "src/lib.cyr"
+
+# All eight parsers feed a single Str input. Returns 0 — we ignore
+# return values; the test is "did this crash?".
+fn _fuzz_parse_all(s) {
+    security_event_from_json(s);
+    quarantine_entry_from_json(s);
+    finding_from_json(s);
+    scan_result_from_json(s);
+    aegis_config_from_json(s);
+    ktr_from_json(s);
+    dbpolicy_from_json(s);
+    aegis_stats_from_json(s);
+    return 0;
+}
+
+# Curated list of inputs that previously caused issues or that
+# exercise edge paths in the parsers. Each is a JSON snippet (or
+# something that should fail to parse cleanly).
+fn _fuzz_known_inputs() {
+    var inputs = vec_new();
+
+    # Empty / minimal
+    vec_push(inputs, str_from(""));
+    vec_push(inputs, str_from("{}"));
+    vec_push(inputs, str_from("[]"));
+    vec_push(inputs, str_from("null"));
+    vec_push(inputs, str_from("true"));
+    vec_push(inputs, str_from("42"));
+    vec_push(inputs, str_from("\"just a string\""));
+
+    # Objects with single fields — exercises missing-field fallbacks
+    vec_push(inputs, str_from("{\"id\":\"x\"}"));
+    vec_push(inputs, str_from("{\"event_type\":\"NotARealVariant\"}"));
+    vec_push(inputs, str_from("{\"threat_level\":\"NotARealLevel\"}"));
+    vec_push(inputs, str_from("{\"scan_type\":\"NotARealScan\"}"));
+
+    # Wrong types where object-shaped fields are expected
+    vec_push(inputs, str_from("{\"timestamp\":42}"));
+    vec_push(inputs, str_from("{\"resolved\":\"not_a_bool\"}"));
+    vec_push(inputs, str_from("{\"max_events\":\"not_a_number\"}"));
+
+    # Null fields (exercises the Option<T> code paths)
+    vec_push(inputs, str_from("{\"agent_id\":null,\"resolved\":false}"));
+    vec_push(inputs, str_from("{\"auto_release_at\":null}"));
+    vec_push(inputs, str_from("{\"auto_release_timeout_secs\":null}"));
+
+    # Nested objects / arrays
+    vec_push(inputs, str_from("{\"metadata\":{}}"));
+    vec_push(inputs, str_from("{\"metadata\":{\"k\":\"v\"}}"));
+    vec_push(inputs, str_from("{\"metadata\":{\"k\":42}}"));
+    vec_push(inputs, str_from("{\"events\":[]}"));
+    vec_push(inputs, str_from("{\"events\":[\"a\",\"b\",\"c\"]}"));
+    vec_push(inputs, str_from("{\"events\":[1,2,3]}"));
+    vec_push(inputs, str_from("{\"findings\":[]}"));
+    vec_push(inputs, str_from("{\"kernel_tuning\":[{},{},{}]}"));
+    vec_push(inputs, str_from("{\"threat_counts\":{\"Critical\":1,\"High\":2}}"));
+
+    # Truncated / unbalanced — should fail to parse cleanly
+    vec_push(inputs, str_from("{"));
+    vec_push(inputs, str_from("{\"unterminated"));
+    vec_push(inputs, str_from("{\"k\":"));
+    vec_push(inputs, str_from("{,}"));
+    vec_push(inputs, str_from("{:}"));
+
+    # Whitespace / control bytes
+    vec_push(inputs, str_from("    "));
+    vec_push(inputs, str_from("\n\n\n"));
+    vec_push(inputs, str_from("\t{\t}\t"));
+
+    var n = vec_len(inputs);
+    var i = 0;
+    while (i < n) {
+        _fuzz_parse_all(vec_get(inputs, i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Random-byte fuzz: per iteration, pick a random length, fill a
+# heap buffer with random bytes, wrap as Str (length-explicit so
+# embedded NULs don't truncate), feed to all parsers. The parsers
+# may produce garbage records or 0; we only check no crashes.
+fn _fuzz_random(iters, max_len) {
+    var buf = alloc(max_len);
+    var len_buf = alloc(8);
+    var i = 0;
+    while (i < iters) {
+        random_bytes(len_buf, 2);
+        var raw = load64(len_buf) & 0x7FF;     # 0..2047
+        if (raw == 0) { raw = 1; }
+        if (raw > max_len) { raw = max_len; }
+        random_bytes(buf, raw);
+        var s = str_new(buf, raw);
+        _fuzz_parse_all(s);
+        i = i + 1;
+    }
     return 0;
 }
 
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
-    println("fuzz: ok");
+    sakshi_set_level(SK_ERROR);
+    _fuzz_known_inputs();
+    _fuzz_random(1000, 2048);
+    println("fuzz: ok (1000 random + curated edge-case inputs)");
     return 0;
 }
 

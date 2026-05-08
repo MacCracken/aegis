@@ -5,7 +5,7 @@
 
 ## Version
 
-**0.8.1** — ring-buffer for the events log (2026-05-08). Replaces the v0.5–0.8 vec + prune-and-rebuild with a fixed-cap ring (O(1) push, overwrite-oldest). `aegis_report_event` ≈ 4 µs avg at 50k iter (was ~220 µs). 0.8.0 brought the JSON serde surface (8 records, wire-compatible with rust-old's serde_json).
+**0.8.2** — polish bucket (2026-05-08). Real fuzz harness (1000 random + curated edge-case inputs across all 8 parsers), 5 ADRs in `docs/adr/`, `bench-history.csv` baseline, `scripts/audit.sh` mirroring CI. Carries forward 0.8.1's ring-buffer perf and 0.8.0's JSON serde surface.
 
 ## Toolchain
 
@@ -22,8 +22,8 @@
   - Helpers: `aegis_next_id` calls agnostik's `agent_id_new()` (RFC 4122 v4) and stringifies via local `_aegis_uuid_to_string(buf16)`; `_aegis_stat_modesize(path, out16)` wraps `sys_stat` (`STAT_MODE` + `STAT_SIZE`); `event_metadata_set` / `event_metadata_get` lazy-init the metadata map; `_aegis_prune_events` rebuilds the events vec with the kept suffix to avoid O(n²) `vec_remove(0)` (still O(n) per push at cap — ring buffer is the planned fix in 0.8.x).
   - Daemon API (cstrs for `agent_id` / `event_id` / path parameters): `aegis_new`, `aegis_report_event` (records + auto-quarantine; returns `QuarantineAction`), `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`, `aegis_scan_agent`, `aegis_scan_package`, `aegis_stats`, `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`, `aegis_database_kernel_recommendations`.
   - `src/main.cyr` — thin entry that includes `src/lib.cyr`.
-- Still deferred (post-parity polish):
-  - **0.8.x** — real fuzz targets for the JSON parsers, ADRs for load-bearing decisions (sentinel choices, cstr API boundary, hashmap flavor selection, ring-buffer cap policy), `bench-history.csv` baseline, `scripts/audit.sh`. Optional: trace-ID propagation (`sakshi_trace_set`) once a multi-process wire flow exists.
+- 0.8.x backlog (closed in 0.8.2): fuzz harness, ADRs, `bench-history.csv`, `scripts/audit.sh` — all shipped.
+- Optional / not yet scheduled: trace-ID propagation (`sakshi_trace_set`) once a multi-process wire flow exists; `scripts/bench.sh` to auto-append `bench-history.csv`.
   - **0.9.0** — V1 prep: API-surface snapshot, full audit, doc polish.
   - **1.0.0** — first stable. API freeze. Firewall stays out per user call (lands in 1.x once nein modernises its `cyrius = "4.5.0"` pin).
   - All scoped in `docs/architecture/cyrius-port-gaps.md`.
@@ -78,7 +78,7 @@ Bench / fuzz harnesses (`tests/aegis.bcyr`, `tests/aegis.fcyr`) remain stubs.
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap, bench, fnptr, sakshi, json
+- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap, bench, fnptr, sakshi, json, random
 - agnostik (v1.0.0) — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by types.cyr's parser paths we don't call, but the compiler needs the symbol)
 
 ## Consumers

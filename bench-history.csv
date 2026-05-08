@@ -1,0 +1,10 @@
+date,version,bench,avg_ns,min_ns,max_ns,iterations,notes
+2026-05-08,0.7.0,aegis_next_id,2000,907,33000,100000,counter→agnostik UUID v4 (0.6.0)
+2026-05-08,0.7.0,security_event_new,3000,1000,124000,100000,
+2026-05-08,0.7.0,aegis_report_event,224000,2000,705000,50000,vec+prune-and-rebuild (pre-0.8.1)
+2026-05-08,0.8.0,aegis_next_id,2000,907,109000,100000,
+2026-05-08,0.8.0,security_event_new,3000,1000,178000,100000,
+2026-05-08,0.8.0,aegis_report_event,222000,2000,579000,50000,JSON serde adds no measurable overhead to report path
+2026-05-08,0.8.1,aegis_next_id,2000,838,109000,100000,
+2026-05-08,0.8.1,security_event_new,3000,1000,206000,100000,
+2026-05-08,0.8.1,aegis_report_event,4000,2000,132000,50000,ring buffer ≈55× speedup vs 0.8.0
