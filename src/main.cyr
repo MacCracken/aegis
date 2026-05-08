@@ -1,0 +1,13 @@
+# aegis — daemon entry point
+# Library types live in src/lib.cyr.
+
+include "src/lib.cyr"
+
+fn main() {
+    alloc_init();
+    println("aegis ready");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

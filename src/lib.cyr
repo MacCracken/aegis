@@ -1,0 +1,117 @@
+# aegis — core types
+#
+# First-slice port: ThreatLevel, SecurityEventType, SecurityEvent record.
+# Records use byte-offset layouts documented in
+# docs/architecture/cyrius-port-gaps.md.
+#
+# Stdlib auto-resolves from cyrius.cyml — no explicit `include` needed here.
+
+# ================================================================
+# ThreatLevel — five severities. Lower number = more severe, so
+# bare `<` matches the manual `Ord` impl in rust-old/src/lib.rs.
+# ================================================================
+enum ThreatLevel {
+    THREAT_CRITICAL = 0;
+    THREAT_HIGH = 1;
+    THREAT_MEDIUM = 2;
+    THREAT_LOW = 3;
+    THREAT_INFO = 4;
+}
+
+fn threat_level_label(t) {
+    if (t == THREAT_CRITICAL) { return "CRITICAL"; }
+    if (t == THREAT_HIGH)     { return "HIGH"; }
+    if (t == THREAT_MEDIUM)   { return "MEDIUM"; }
+    if (t == THREAT_LOW)      { return "LOW"; }
+    if (t == THREAT_INFO)     { return "INFO"; }
+    return "UNKNOWN";
+}
+
+# ================================================================
+# SecurityEventType — category of a reported event.
+# Labels match serde's snake_case rendering in rust-old.
+# ================================================================
+enum SecurityEventType {
+    EV_INTEGRITY_VIOLATION       = 0;
+    EV_ANOMALOUS_BEHAVIOR        = 1;
+    EV_UNAUTHORIZED_ACCESS       = 2;
+    EV_SANDBOX_ESCAPE            = 3;
+    EV_NETWORK_VIOLATION         = 4;
+    EV_TRUST_VIOLATION           = 5;
+    EV_FILESYSTEM_VIOLATION      = 6;
+    EV_RESOURCE_EXHAUSTION       = 7;
+    EV_MALICIOUS_PAYLOAD         = 8;
+    EV_POLICY_VIOLATION          = 9;
+    EV_DATABASE_INTEGRITY        = 10;
+    EV_DATABASE_ACCESS_VIOLATION = 11;
+}
+
+fn event_type_label(k) {
+    if (k == EV_INTEGRITY_VIOLATION)       { return "integrity_violation"; }
+    if (k == EV_ANOMALOUS_BEHAVIOR)        { return "anomalous_behavior"; }
+    if (k == EV_UNAUTHORIZED_ACCESS)       { return "unauthorized_access"; }
+    if (k == EV_SANDBOX_ESCAPE)            { return "sandbox_escape"; }
+    if (k == EV_NETWORK_VIOLATION)         { return "network_violation"; }
+    if (k == EV_TRUST_VIOLATION)           { return "trust_violation"; }
+    if (k == EV_FILESYSTEM_VIOLATION)      { return "filesystem_violation"; }
+    if (k == EV_RESOURCE_EXHAUSTION)       { return "resource_exhaustion"; }
+    if (k == EV_MALICIOUS_PAYLOAD)         { return "malicious_payload"; }
+    if (k == EV_POLICY_VIOLATION)          { return "policy_violation"; }
+    if (k == EV_DATABASE_INTEGRITY)        { return "database_integrity"; }
+    if (k == EV_DATABASE_ACCESS_VIOLATION) { return "database_access_violation"; }
+    return "unknown";
+}
+
+# ================================================================
+# Event ID generator — counter-backed for the first slice.
+# Swap to agnostik agent_id_new() once that dep lands.
+# ================================================================
+var _aegis_id_counter = 0;
+
+fn aegis_next_id() {
+    _aegis_id_counter = _aegis_id_counter + 1;
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "ev-");
+    str_builder_add_int(sb, _aegis_id_counter);
+    return str_builder_build(sb);
+}
+
+# ================================================================
+# SecurityEvent — 72-byte record:
+#   id           @ 0    Str*
+#   timestamp    @ 8    epoch seconds (i64)
+#   event_type   @ 16   SecurityEventType (i64)
+#   source       @ 24   Str*
+#   agent_id     @ 32   Str* — 0 means None
+#   threat_level @ 40   ThreatLevel (i64)
+#   description  @ 48   Str*
+#   metadata     @ 56   map* — 0 until first set (lazy-init)
+#   resolved     @ 64   i64 (0/1)
+# ================================================================
+var SECURITY_EVENT_SIZE = 72;
+
+fn security_event_new(event_type, source_cstr, agent_id_str, threat_level, description_cstr) {
+    var e = alloc(SECURITY_EVENT_SIZE);
+    store64(e + 0,  aegis_next_id());
+    store64(e + 8,  clock_epoch_secs());
+    store64(e + 16, event_type);
+    store64(e + 24, str_from(source_cstr));
+    store64(e + 32, agent_id_str);
+    store64(e + 40, threat_level);
+    store64(e + 48, str_from(description_cstr));
+    store64(e + 56, 0);
+    store64(e + 64, 0);
+    return e;
+}
+
+fn event_id(e)           { return load64(e + 0); }
+fn event_timestamp(e)    { return load64(e + 8); }
+fn event_kind(e)         { return load64(e + 16); }
+fn event_source(e)       { return load64(e + 24); }
+fn event_agent_id(e)     { return load64(e + 32); }
+fn event_threat_level(e) { return load64(e + 40); }
+fn event_description(e)  { return load64(e + 48); }
+fn event_metadata(e)     { return load64(e + 56); }
+fn event_resolved(e)     { return load64(e + 64); }
+
+fn event_set_resolved(e, v) { store64(e + 64, v); return 0; }

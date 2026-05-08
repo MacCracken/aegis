@@ -1,0 +1,14 @@
+[package]
+name = "aegis"
+version = "0.1.0"
+description = "aegis — Cyrius port (from 1893 lines of Rust)"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "5.10.0"
+
+[build]
+entry = "src/main.cyr"
+output = "aegis"
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap"]

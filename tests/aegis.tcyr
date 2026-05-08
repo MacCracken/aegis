@@ -1,0 +1,84 @@
+# aegis test suite
+#
+# First-slice tests: enums + label round-trips + SecurityEvent construction.
+
+include "src/lib.cyr"
+
+fn test_threat_level_labels() {
+    test_group("threat_level_labels");
+    assert_streq(threat_level_label(THREAT_CRITICAL), "CRITICAL", "CRITICAL label");
+    assert_streq(threat_level_label(THREAT_HIGH),     "HIGH",     "HIGH label");
+    assert_streq(threat_level_label(THREAT_MEDIUM),   "MEDIUM",   "MEDIUM label");
+    assert_streq(threat_level_label(THREAT_LOW),      "LOW",      "LOW label");
+    assert_streq(threat_level_label(THREAT_INFO),     "INFO",     "INFO label");
+    return 0;
+}
+
+fn test_threat_level_ordering() {
+    test_group("threat_level_ordering");
+    # More severe = lower numeric value (matches rust-old's manual Ord).
+    assert(THREAT_CRITICAL < THREAT_HIGH,   "CRITICAL < HIGH");
+    assert(THREAT_HIGH     < THREAT_MEDIUM, "HIGH < MEDIUM");
+    assert(THREAT_MEDIUM   < THREAT_LOW,    "MEDIUM < LOW");
+    assert(THREAT_LOW      < THREAT_INFO,   "LOW < INFO");
+    return 0;
+}
+
+fn test_event_type_labels() {
+    test_group("event_type_labels");
+    assert_streq(event_type_label(EV_INTEGRITY_VIOLATION),
+                 "integrity_violation", "integrity_violation label");
+    assert_streq(event_type_label(EV_SANDBOX_ESCAPE),
+                 "sandbox_escape", "sandbox_escape label");
+    assert_streq(event_type_label(EV_DATABASE_INTEGRITY),
+                 "database_integrity", "database_integrity label");
+    assert_streq(event_type_label(EV_DATABASE_ACCESS_VIOLATION),
+                 "database_access_violation", "database_access_violation label");
+    return 0;
+}
+
+fn test_security_event_new() {
+    test_group("security_event_new");
+    var e = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_LOW, "test event");
+    assert_eq(event_kind(e),         EV_POLICY_VIOLATION, "kind round-trips");
+    assert_eq(event_threat_level(e), THREAT_LOW,          "threat_level round-trips");
+    assert_eq(event_resolved(e),     0,                   "starts unresolved");
+    assert_eq(event_agent_id(e),     0,                   "agent_id None when not provided");
+    assert_eq(event_metadata(e),     0,                   "metadata lazy (0 until first set)");
+    assert_gt(str_len(event_id(e)),         0, "id is non-empty");
+    assert_gt(event_timestamp(e),           0, "timestamp is set");
+    assert_gt(str_len(event_source(e)),     0, "source is non-empty");
+    assert_gt(str_len(event_description(e)), 0, "description is non-empty");
+    return 0;
+}
+
+fn test_event_set_resolved() {
+    test_group("event_set_resolved");
+    var e = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_INFO, "test");
+    assert_eq(event_resolved(e), 0, "starts unresolved");
+    event_set_resolved(e, 1);
+    assert_eq(event_resolved(e), 1, "resolved=1 after set");
+    return 0;
+}
+
+fn test_event_ids_unique() {
+    test_group("event_ids_unique");
+    var e1 = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_LOW, "first");
+    var e2 = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_LOW, "second");
+    assert_eq(str_eq(event_id(e1), event_id(e2)), 0, "ids differ across constructions");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    test_threat_level_labels();
+    test_threat_level_ordering();
+    test_event_type_labels();
+    test_security_event_new();
+    test_event_set_resolved();
+    test_event_ids_unique();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);
