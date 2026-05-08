@@ -27,13 +27,13 @@ fn test_threat_level_ordering() {
 fn test_event_type_labels() {
     test_group("event_type_labels");
     assert_streq(event_type_label(EV_INTEGRITY_VIOLATION),
-                 "integrity_violation", "integrity_violation label");
+    "integrity_violation", "integrity_violation label");
     assert_streq(event_type_label(EV_SANDBOX_ESCAPE),
-                 "sandbox_escape", "sandbox_escape label");
+    "sandbox_escape", "sandbox_escape label");
     assert_streq(event_type_label(EV_DATABASE_INTEGRITY),
-                 "database_integrity", "database_integrity label");
+    "database_integrity", "database_integrity label");
     assert_streq(event_type_label(EV_DATABASE_ACCESS_VIOLATION),
-                 "database_access_violation", "database_access_violation label");
+    "database_access_violation", "database_access_violation label");
     return 0;
 }
 
@@ -79,8 +79,8 @@ fn test_aegis_config_defaults() {
     assert_eq(aegis_config_quarantine_on_high(c),          1,     "quarantine_on_high true");
     assert_eq(aegis_config_max_events(c),                  10000, "max_events 10000");
     assert_eq(aegis_config_auto_release_timeout_secs(c),
-              AEGIS_AUTO_RELEASE_NONE,
-              "auto_release_timeout_secs None (-1)");
+    AEGIS_AUTO_RELEASE_NONE,
+    "auto_release_timeout_secs None (-1)");
     return 0;
 }
 
@@ -504,9 +504,9 @@ fn test_database_security_policy_defaults() {
     test_group("database_security_policy_defaults");
     var p = database_security_policy_default();
     assert_streq(str_data(dbpolicy_postgres_data_dir(p)),
-                 "/var/lib/postgresql/data", "postgres_data_dir default");
+    "/var/lib/postgresql/data", "postgres_data_dir default");
     assert_streq(str_data(dbpolicy_redis_data_dir(p)),
-                 "/var/lib/redis", "redis_data_dir default");
+    "/var/lib/redis", "redis_data_dir default");
     assert_eq(dbpolicy_audit_ddl(p),                 1,  "audit_ddl default true");
     assert_eq(dbpolicy_max_connections_per_agent(p), 10, "max_connections_per_agent 10");
     assert_eq(dbpolicy_check_socket_permissions(p),  1,  "check_socket_permissions true");
@@ -562,7 +562,7 @@ fn test_database_integrity_world_accessible_dir() {
     dbpolicy_set_check_socket_permissions(p, 0);
     var findings = aegis_check_database_integrity(d, p);
     assert_eq(_findings_have_category(findings, "database_permissions"), 1,
-              "world-accessible pgdir flagged as database_permissions");
+    "world-accessible pgdir flagged as database_permissions");
     sys_rmdir(pgdir);
     return 0;
 }
@@ -597,14 +597,14 @@ fn test_database_access_violation_quarantines_agent() {
     test_group("database_access_violation_quarantines_agent");
     var d = aegis_new(aegis_config_default());
     var action = aegis_report_database_access_violation(
-        d, "malicious", "admin_db", "cross-namespace access");
+    d, "malicious", "admin_db", "cross-namespace access");
     # High threat with default config (quarantine_on_high=1) → suspend
     assert_eq(action,                                 QA_SUSPEND, "Suspend on High");
     assert_eq(aegis_is_quarantined(d, "malicious"),  1,          "malicious quarantined");
     var events = aegis_events_for_agent(d, "malicious");
     assert_eq(vec_len(events),                          1, "one event recorded");
     assert_eq(event_kind(vec_get(events, 0)),
-              EV_DATABASE_ACCESS_VIOLATION, "kind = database_access_violation");
+    EV_DATABASE_ACCESS_VIOLATION, "kind = database_access_violation");
     return 0;
 }
 
@@ -621,8 +621,8 @@ fn test_database_access_violation_metadata() {
 
 fn test_database_event_types_distinguishable() {
     test_group("database_event_types_distinguishable");
-    assert_neq(EV_DATABASE_INTEGRITY,        EV_DATABASE_ACCESS_VIOLATION, "DB integrity != DB access violation");
-    assert_neq(EV_DATABASE_INTEGRITY,        EV_INTEGRITY_VIOLATION,       "DB integrity != generic integrity violation");
+    assert_neq(EV_DATABASE_INTEGRITY, EV_DATABASE_ACCESS_VIOLATION, "DB integrity != DB access violation");
+    assert_neq(EV_DATABASE_INTEGRITY, EV_INTEGRITY_VIOLATION,       "DB integrity != generic integrity violation");
     return 0;
 }
 

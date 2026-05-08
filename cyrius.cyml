@@ -1,7 +1,7 @@
 [package]
 name = "aegis"
-version = "0.1.0"
-description = "aegis — Cyrius port (from 1893 lines of Rust)"
+version = "${file:VERSION}"
+description = "aegis — security daemon for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
 cyrius = "5.10.0"

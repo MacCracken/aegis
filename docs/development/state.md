@@ -5,11 +5,13 @@
 
 ## Version
 
-**0.1.0** — ported from Rust (2026-05-08) via `cyrius port`. 1893 lines of Rust preserved at `rust-old/` for parity reference.
+**0.5.0** — first cyrius release (2026-05-08). Surface parity with the prior Rust scaffold (`rust-old/src/lib.rs`, 1893 lines) reached. `cyrius.cyml` `version` is sourced from `VERSION` via `${file:VERSION}`.
 
 ## Toolchain
 
 - **Cyrius pin**: `5.10.0` (in `cyrius.cyml [package].cyrius`)
+- **CI**: `.github/workflows/ci.yml` — toolchain install, syntax check, deps + lockfile verify, fmt-diff gate, lint (warnings fail), vet, DCE build, ELF check, aarch64 cross-build (best-effort), smoke test, full test suite, fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
+- **Release**: `.github/workflows/release.yml` — runs CI, verifies tag matches `VERSION`, builds x86_64 + aarch64 (best-effort), packages source tarball + `aegis-<ver>-lib.cyr` + binaries + `SHA256SUMS`, creates GitHub release with body sliced from `CHANGELOG.md`. `0.x` tags are tagged prerelease.
 
 ## Source
 

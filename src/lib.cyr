@@ -640,10 +640,10 @@ fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
         str_builder_add_cstr(desc_sb, "Binary not found at ");
         str_builder_add_cstr(desc_sb, binary_path_cstr);
         vec_push(findings, finding_new(
-            THREAT_HIGH,
-            str_from("missing_binary"),
-            str_builder_build(desc_sb),
-            str_from("Verify the agent installation is complete.")));
+        THREAT_HIGH,
+        str_from("missing_binary"),
+        str_builder_build(desc_sb),
+        str_from("Verify the agent installation is complete.")));
     } else {
         var ms[16];
         if (_aegis_stat_modesize(binary_path_cstr, &ms) == 1) {
@@ -651,24 +651,24 @@ fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
             var size = load64(&ms + 8);
             if (size == 0) {
                 vec_push(findings, finding_new(
-                    THREAT_MEDIUM,
-                    str_from("empty_binary"),
-                    str_from("Agent binary is empty (0 bytes)."),
-                    str_from("Re-install the agent.")));
+                THREAT_MEDIUM,
+                str_from("empty_binary"),
+                str_from("Agent binary is empty (0 bytes)."),
+                str_from("Re-install the agent.")));
             }
             if ((mode & 2) != 0) {
                 vec_push(findings, finding_new(
-                    THREAT_HIGH,
-                    str_from("world_writable"),
-                    str_from("Agent binary is world-writable."),
-                    str_from("Fix permissions: chmod o-w on the binary.")));
+                THREAT_HIGH,
+                str_from("world_writable"),
+                str_from("Agent binary is world-writable."),
+                str_from("Fix permissions: chmod o-w on the binary.")));
             }
         } else {
             vec_push(findings, finding_new(
-                THREAT_MEDIUM,
-                str_from("unreadable_metadata"),
-                str_from("Cannot read file metadata."),
-                str_from("Check file permissions and ownership.")));
+            THREAT_MEDIUM,
+            str_from("unreadable_metadata"),
+            str_from("Cannot read file metadata."),
+            str_from("Check file permissions and ownership.")));
         }
     }
 
@@ -692,35 +692,35 @@ fn aegis_scan_package(d, package_path_cstr) {
         str_builder_add_cstr(desc_sb, "Package not found at ");
         str_builder_add_cstr(desc_sb, package_path_cstr);
         vec_push(findings, finding_new(
-            THREAT_HIGH,
-            str_from("missing_package"),
-            str_builder_build(desc_sb),
-            str_from("Verify download completed successfully.")));
+        THREAT_HIGH,
+        str_from("missing_package"),
+        str_builder_build(desc_sb),
+        str_from("Verify download completed successfully.")));
     } else {
         var ms[16];
         if (_aegis_stat_modesize(package_path_cstr, &ms) == 1) {
             var size = load64(&ms + 8);
             if (size == 0) {
                 vec_push(findings, finding_new(
-                    THREAT_MEDIUM,
-                    str_from("empty_package"),
-                    str_from("Package file is empty (0 bytes)."),
-                    str_from("Re-download the package.")));
+                THREAT_MEDIUM,
+                str_from("empty_package"),
+                str_from("Package file is empty (0 bytes)."),
+                str_from("Re-download the package.")));
             }
             # 500 MB threshold — informational
             if (size > 524288000) {
                 vec_push(findings, finding_new(
-                    THREAT_LOW,
-                    str_from("large_package"),
-                    str_from("Package is very large (>500 MB)."),
-                    str_from("Review package contents for unnecessary data.")));
+                THREAT_LOW,
+                str_from("large_package"),
+                str_from("Package is very large (>500 MB)."),
+                str_from("Review package contents for unnecessary data.")));
             }
         } else {
             vec_push(findings, finding_new(
-                THREAT_MEDIUM,
-                str_from("unreadable_metadata"),
-                str_from("Cannot read package metadata."),
-                str_from("Check file permissions and download integrity.")));
+            THREAT_MEDIUM,
+            str_from("unreadable_metadata"),
+            str_from("Cannot read package metadata."),
+            str_from("Check file permissions and download integrity.")));
         }
     }
 
@@ -830,17 +830,17 @@ fn database_security_policy_default() {
     store64(p + 32, 1);
     var kt = vec_new();
     vec_push(kt, ktr_new(
-        "vm.overcommit_memory", "1",
-        "Redis requires overcommit for background saves"));
+    "vm.overcommit_memory", "1",
+    "Redis requires overcommit for background saves"));
     vec_push(kt, ktr_new(
-        "vm.swappiness", "1",
-        "Minimize swap usage for database workloads"));
+    "vm.swappiness", "1",
+    "Minimize swap usage for database workloads"));
     vec_push(kt, ktr_new(
-        "net.core.somaxconn", "512",
-        "Increase connection backlog for database servers"));
+    "net.core.somaxconn", "512",
+    "Increase connection backlog for database servers"));
     vec_push(kt, ktr_new(
-        "kernel.shmmax", "17179869184",
-        "PostgreSQL shared memory allocation (16 GB)"));
+    "kernel.shmmax", "17179869184",
+    "PostgreSQL shared memory allocation (16 GB)"));
     store64(p + 40, kt);
     return p;
 }
@@ -908,10 +908,10 @@ fn _aegis_check_pg_socket(findings) {
     var mode = load64(&ms);
     if ((mode & 2) != 0) {
         vec_push(findings, finding_new(
-            THREAT_MEDIUM,
-            str_from("socket_permissions"),
-            str_from("PostgreSQL socket is world-writable"),
-            str_from("Restrict socket permissions to owner/group only")));
+        THREAT_MEDIUM,
+        str_from("socket_permissions"),
+        str_from("PostgreSQL socket is world-writable"),
+        str_from("Restrict socket permissions to owner/group only")));
     }
     return 0;
 }
@@ -956,11 +956,11 @@ fn aegis_audit_ddl_operation(d, agent_id_cstr, operation_cstr, object_cstr) {
     var desc = str_builder_build(sb);
 
     var ev = security_event_new(
-        EV_DATABASE_INTEGRITY,
-        "database",
-        agent_id_cstr,
-        THREAT_INFO,
-        str_data(desc));
+    EV_DATABASE_INTEGRITY,
+    "database",
+    agent_id_cstr,
+    THREAT_INFO,
+    str_data(desc));
     event_metadata_set(ev, "ddl_operation", str_from(operation_cstr));
     event_metadata_set(ev, "ddl_object",    str_from(object_cstr));
 
@@ -981,11 +981,11 @@ fn aegis_report_database_access_violation(d, agent_id_cstr, database_cstr, reaso
     var desc = str_builder_build(sb);
 
     var ev = security_event_new(
-        EV_DATABASE_ACCESS_VIOLATION,
-        "database",
-        agent_id_cstr,
-        THREAT_HIGH,
-        str_data(desc));
+    EV_DATABASE_ACCESS_VIOLATION,
+    "database",
+    agent_id_cstr,
+    THREAT_HIGH,
+    str_data(desc));
     event_metadata_set(ev, "database",         str_from(database_cstr));
     event_metadata_set(ev, "violation_reason", str_from(reason_cstr));
 
