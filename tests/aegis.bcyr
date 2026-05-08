@@ -1,10 +1,67 @@
 # aegis benchmarks
+#
+# Hot paths worth tracking: id generation, event construction, and
+# the report+counter+prune cycle. Use the real `bench_new` /
+# `bench_run` / `bench_report` API from lib/bench.cyr (the scaffold's
+# `bench("name", &fn, n)` shape was fictional).
 
-fn bench_noop() { return 0; }
+include "src/lib.cyr"
+
+# ----------------------------------------------------------------
+# Shared daemon for the report-event bench. Globals so the closures
+# called by bench_run see a stable target.
+# ----------------------------------------------------------------
+var _bench_daemon = 0;
+
+fn _bench_setup() {
+    _bench_daemon = aegis_new(aegis_config_default());
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# bench_aegis_next_id — counter-backed id generator (str_builder
+# alloc + format).
+# ----------------------------------------------------------------
+fn bench_aegis_next_id() {
+    aegis_next_id();
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# bench_security_event_new — alloc + id + 9 stores.
+# ----------------------------------------------------------------
+fn bench_security_event_new() {
+    security_event_new(EV_POLICY_VIOLATION, "bench", 0, THREAT_INFO, "x");
+    return 0;
+}
+
+# ----------------------------------------------------------------
+# bench_report_event — the steady-state path: build event + push +
+# increment threat count + prune-check. No agent_id so no
+# auto-quarantine branch is taken.
+# ----------------------------------------------------------------
+fn bench_report_event() {
+    var ev = security_event_new(EV_POLICY_VIOLATION, "bench", 0, THREAT_INFO, "x");
+    aegis_report_event(_bench_daemon, ev);
+    return 0;
+}
 
 fn main() {
     alloc_init();
-    bench("noop", &bench_noop, 1000000);
+    _bench_setup();
+
+    var b1 = bench_new("aegis_next_id");
+    bench_run(b1, &bench_aegis_next_id, 100000);
+    bench_report(b1);
+
+    var b2 = bench_new("security_event_new");
+    bench_run(b2, &bench_security_event_new, 100000);
+    bench_report(b2);
+
+    var b3 = bench_new("aegis_report_event");
+    bench_run(b3, &bench_report_event, 50000);
+    bench_report(b3);
+
     return 0;
 }
 
