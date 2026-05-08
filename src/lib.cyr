@@ -771,3 +771,223 @@ fn stats_scans_completed(s)    { return load64(s + 24); }
 fn stats_threat_count(s, level) {
     return load64(s + 32 + level * 8);
 }
+
+# ================================================================
+# SecurityEvent.metadata — lazy-init cstr-keyed map; values are Str*.
+# ================================================================
+fn event_metadata_set(e, key_cstr, value_str) {
+    if (event_metadata(e) == 0) {
+        store64(e + 56, map_new());
+    }
+    map_set(event_metadata(e), key_cstr, value_str);
+    return 0;
+}
+
+# Returns the Str* value or 0 if the key is absent.
+fn event_metadata_get(e, key_cstr) {
+    if (event_metadata(e) == 0) { return 0; }
+    if (map_has(event_metadata(e), key_cstr) == 0) { return 0; }
+    return map_get(event_metadata(e), key_cstr);
+}
+
+# ================================================================
+# KernelTuningRecommendation — 24-byte record:
+#   parameter         @ 0   Str*
+#   recommended_value @ 8   Str*
+#   reason            @ 16  Str*
+# ================================================================
+var KERNEL_TUNING_REC_SIZE = 24;
+
+fn ktr_new(parameter_cstr, recommended_value_cstr, reason_cstr) {
+    var k = alloc(KERNEL_TUNING_REC_SIZE);
+    store64(k + 0,  str_from(parameter_cstr));
+    store64(k + 8,  str_from(recommended_value_cstr));
+    store64(k + 16, str_from(reason_cstr));
+    return k;
+}
+
+fn ktr_parameter(k)         { return load64(k + 0); }
+fn ktr_recommended_value(k) { return load64(k + 8); }
+fn ktr_reason(k)            { return load64(k + 16); }
+
+# ================================================================
+# DatabaseSecurityPolicy — 48-byte record:
+#   postgres_data_dir         @ 0   Str*
+#   redis_data_dir            @ 8   Str*
+#   audit_ddl                 @ 16  i64 (0/1)
+#   max_connections_per_agent @ 24  i64
+#   check_socket_permissions  @ 32  i64 (0/1)
+#   kernel_tuning             @ 40  vec* of KernelTuningRecommendation*
+# ================================================================
+var DB_SECURITY_POLICY_SIZE = 48;
+
+fn database_security_policy_default() {
+    var p = alloc(DB_SECURITY_POLICY_SIZE);
+    store64(p + 0,  str_from("/var/lib/postgresql/data"));
+    store64(p + 8,  str_from("/var/lib/redis"));
+    store64(p + 16, 1);
+    store64(p + 24, 10);
+    store64(p + 32, 1);
+    var kt = vec_new();
+    vec_push(kt, ktr_new(
+        "vm.overcommit_memory", "1",
+        "Redis requires overcommit for background saves"));
+    vec_push(kt, ktr_new(
+        "vm.swappiness", "1",
+        "Minimize swap usage for database workloads"));
+    vec_push(kt, ktr_new(
+        "net.core.somaxconn", "512",
+        "Increase connection backlog for database servers"));
+    vec_push(kt, ktr_new(
+        "kernel.shmmax", "17179869184",
+        "PostgreSQL shared memory allocation (16 GB)"));
+    store64(p + 40, kt);
+    return p;
+}
+
+fn dbpolicy_postgres_data_dir(p)         { return load64(p + 0); }
+fn dbpolicy_redis_data_dir(p)            { return load64(p + 8); }
+fn dbpolicy_audit_ddl(p)                 { return load64(p + 16); }
+fn dbpolicy_max_connections_per_agent(p) { return load64(p + 24); }
+fn dbpolicy_check_socket_permissions(p)  { return load64(p + 32); }
+fn dbpolicy_kernel_tuning(p)             { return load64(p + 40); }
+
+fn dbpolicy_set_postgres_data_dir(p, str_v)        { store64(p + 0,  str_v); return 0; }
+fn dbpolicy_set_redis_data_dir(p, str_v)           { store64(p + 8,  str_v); return 0; }
+fn dbpolicy_set_audit_ddl(p, v)                    { store64(p + 16, v);     return 0; }
+fn dbpolicy_set_max_connections_per_agent(p, v)    { store64(p + 24, v);     return 0; }
+fn dbpolicy_set_check_socket_permissions(p, v)     { store64(p + 32, v);     return 0; }
+
+# Static accessor — kernel_tuning vec on the policy.
+fn aegis_database_kernel_recommendations(policy) {
+    return dbpolicy_kernel_tuning(policy);
+}
+
+# ================================================================
+# Database integrity / audit / access-violation reporting.
+# ================================================================
+
+# Add a "X data directory ... is world-accessible" finding for the
+# given dir + mode. `mode & 0o007 != 0` means any other-bit set.
+fn _aegis_dbdir_world_accessible_finding(label_cstr, path_str, mode) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, label_cstr);
+    str_builder_add_cstr(sb, " data directory ");
+    str_builder_add(sb, path_str);
+    str_builder_add_cstr(sb, " is world-accessible (mode ");
+    str_builder_add_int(sb, mode);
+    str_builder_add_cstr(sb, ")");
+    var desc = str_builder_build(sb);
+
+    var rec = str_builder_new();
+    str_builder_add_cstr(rec, "Run: chmod 700 on the ");
+    str_builder_add_cstr(rec, label_cstr);
+    str_builder_add_cstr(rec, " data directory");
+    var recstr = str_builder_build(rec);
+
+    return finding_new(THREAT_HIGH, str_from("database_permissions"), desc, recstr);
+}
+
+fn _aegis_check_dbdir(findings, label_cstr, path_str) {
+    var path_cstr = str_data(path_str);
+    if (file_exists(path_cstr) == 0) { return 0; }
+    var ms[16];
+    if (_aegis_stat_modesize(path_cstr, &ms) == 0) { return 0; }
+    var mode = load64(&ms);
+    if ((mode & 7) != 0) {
+        vec_push(findings, _aegis_dbdir_world_accessible_finding(label_cstr, path_str, mode));
+    }
+    return 0;
+}
+
+fn _aegis_check_pg_socket(findings) {
+    var sock = "/run/postgresql/.s.PGSQL.5432";
+    if (file_exists(sock) == 0) { return 0; }
+    var ms[16];
+    if (_aegis_stat_modesize(sock, &ms) == 0) { return 0; }
+    var mode = load64(&ms);
+    if ((mode & 2) != 0) {
+        vec_push(findings, finding_new(
+            THREAT_MEDIUM,
+            str_from("socket_permissions"),
+            str_from("PostgreSQL socket is world-writable"),
+            str_from("Restrict socket permissions to owner/group only")));
+    }
+    return 0;
+}
+
+# Check database data-dir + socket integrity. Returns a vec of
+# findings; also records a scan in scan_history with target
+# "database-services". Mirrors rust-old: silent on nonexistent
+# dirs, flags world-accessible (mode & 0o007) data dirs as High,
+# flags world-writable PG socket as Medium when policy.check_socket_permissions.
+fn aegis_check_database_integrity(d, policy) {
+    var findings = vec_new();
+
+    _aegis_check_dbdir(findings, "PostgreSQL", dbpolicy_postgres_data_dir(policy));
+    _aegis_check_dbdir(findings, "Redis",      dbpolicy_redis_data_dir(policy));
+
+    if (dbpolicy_check_socket_permissions(policy) == 1) {
+        _aegis_check_pg_socket(findings);
+    }
+
+    # Record the scan regardless of whether findings appeared.
+    var result = _scan_result_new(str_from("database-services"), ST_PERIODIC);
+    # Splice findings into the result vec.
+    var n = vec_len(findings);
+    var i = 0;
+    while (i < n) {
+        vec_push(scan_findings(result), vec_get(findings, i));
+        i = i + 1;
+    }
+    _scan_result_seal(result);
+    vec_push(_aegis_ensure_scan_history(d), result);
+
+    return findings;
+}
+
+# Report a DDL-audit event. agent_id_cstr may be 0 for None.
+fn aegis_audit_ddl_operation(d, agent_id_cstr, operation_cstr, object_cstr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "DDL operation: ");
+    str_builder_add_cstr(sb, operation_cstr);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, object_cstr);
+    var desc = str_builder_build(sb);
+
+    var ev = security_event_new(
+        EV_DATABASE_INTEGRITY,
+        "database",
+        agent_id_cstr,
+        THREAT_INFO,
+        str_data(desc));
+    event_metadata_set(ev, "ddl_operation", str_from(operation_cstr));
+    event_metadata_set(ev, "ddl_object",    str_from(object_cstr));
+
+    return aegis_report_event(d, ev);
+}
+
+# Report an unauthorized database access attempt. agent_id_cstr is
+# required (the call doesn't make sense without an agent).
+fn aegis_report_database_access_violation(d, agent_id_cstr, database_cstr, reason_cstr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Unauthorized database access by agent ");
+    str_builder_add_cstr(sb, agent_id_cstr);
+    str_builder_add_cstr(sb, ": ");
+    str_builder_add_cstr(sb, database_cstr);
+    str_builder_add_cstr(sb, " (");
+    str_builder_add_cstr(sb, reason_cstr);
+    str_builder_add_cstr(sb, ")");
+    var desc = str_builder_build(sb);
+
+    var ev = security_event_new(
+        EV_DATABASE_ACCESS_VIOLATION,
+        "database",
+        agent_id_cstr,
+        THREAT_HIGH,
+        str_data(desc));
+    event_metadata_set(ev, "database",         str_from(database_cstr));
+    event_metadata_set(ev, "violation_reason", str_from(reason_cstr));
+
+    return aegis_report_event(d, ev);
+}

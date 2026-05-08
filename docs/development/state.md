@@ -14,15 +14,18 @@
 ## Source
 
 - Rust reference: 1893 lines at `rust-old/` (frozen, do not edit).
-- Cyrius port (slices 1–4, 2026-05-08):
-  - `src/lib.cyr` — `ThreatLevel`, `SecurityEventType`, `QuarantineAction`, `ScanType` enums (with label fns; `QA_NONE = 0` sentinel so `report_event` returns action-or-zero without tagged Option overhead). Counter-backed `aegis_next_id`. Records: 72-byte `SecurityEvent`, 56-byte `AegisConfig` (`-1` sentinel for `auto_release_timeout_secs = None`), 48-byte `QuarantineEntry`, 32-byte `SecurityFinding`, 40-byte `SecurityScanResult`, 72-byte `AegisStats` (with inline 5-slot threat-counts array), 72-byte `AegisSecurityDaemon` (config + events vec + lazy-init quarantine map + lazy-init scan-history vec + inline 5-slot threat-counts array). Stat helper `_aegis_stat_modesize(path, out)` wraps `sys_stat` and pulls `STAT_MODE`/`STAT_SIZE` into a 16-byte caller-owned scratch.
-  - Daemon API (cstrs for `agent_id` / `event_id` / path parameters): `aegis_new`, `aegis_report_event` (records + auto-quarantine; returns `QuarantineAction`), `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`, `aegis_scan_agent` (missing / empty / world-writable / unreadable findings; respects `scan_on_execute`), `aegis_scan_package` (missing / empty / oversized >500 MB / unreadable; respects `scan_on_install`), `aegis_stats`. `_aegis_prune_events` rebuilds the events vec with the kept suffix instead of an O(n²) `vec_remove(0)` loop.
+- Cyrius port (slices 1–5 complete, 2026-05-08): **full surface parity with `rust-old/src/lib.rs`** — all 13 public types and 22 daemon methods.
+  - Enums: `ThreatLevel`, `SecurityEventType`, `QuarantineAction` (`QA_NONE = 0` so `report_event` returns action-or-zero), `ScanType`. All have label fns.
+  - Records: 72-byte `SecurityEvent` (with lazy-init `metadata` cstr-keyed map), 56-byte `AegisConfig` (`-1` sentinel for `auto_release_timeout_secs = None`), 48-byte `QuarantineEntry`, 32-byte `SecurityFinding`, 40-byte `SecurityScanResult`, 24-byte `KernelTuningRecommendation`, 48-byte `DatabaseSecurityPolicy`, 72-byte `AegisStats`, 72-byte `AegisSecurityDaemon` (config + events vec + lazy-init quarantine map + lazy-init scan-history vec + inline 5-slot threat-counts array).
+  - Helpers: counter-backed `aegis_next_id`; `_aegis_stat_modesize(path, out16)` wraps `sys_stat` (`STAT_MODE` + `STAT_SIZE`); `event_metadata_set` / `event_metadata_get` lazy-init the metadata map; `_aegis_prune_events` rebuilds the events vec with the kept suffix to avoid O(n²) `vec_remove(0)`.
+  - Daemon API (cstrs for `agent_id` / `event_id` / path parameters): `aegis_new`, `aegis_report_event` (records + auto-quarantine; returns `QuarantineAction`), `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`, `aegis_scan_agent`, `aegis_scan_package`, `aegis_stats`, `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`, `aegis_database_kernel_recommendations`.
   - `src/main.cyr` — thin entry that includes `src/lib.cyr`.
-- Not yet ported: `DatabaseSecurityPolicy`, `KernelTuningRecommendation`, `check_database_integrity`, `audit_ddl_operation`, `report_database_access_violation`. JSON serde, sakshi-full structured logging, agnostik UUIDs, nein firewall — all deferred (see `docs/architecture/cyrius-port-gaps.md`).
+- **rust-old can be removed** once the user signs off. `firewall.rs` is the only outstanding rust file (deferred until nein modernises its `cyrius = "4.5.0"` pin — see `docs/architecture/cyrius-port-gaps.md`); the rest of `rust-old/src/lib.rs` is fully reproduced.
+- Still deferred (post-parity polish): JSON serde (hand-rolled per-record), sakshi-full structured logging (spans + trace IDs), agnostik UUIDs (replace counter-backed `aegis_next_id`), nein firewall integration. All scoped in `docs/architecture/cyrius-port-gaps.md`.
 
 ## Tests
 
-`tests/aegis.tcyr` — 42 groups, **123 assertions, all passing** on `cyrius test tests/aegis.tcyr`:
+`tests/aegis.tcyr` — 53 groups, **155 assertions, all passing** on `cyrius test tests/aegis.tcyr`:
 
 Slice 1 (records):
 
@@ -54,6 +57,15 @@ Slice 4 (scans + stats):
 - `scan_package_missing` / `scan_package_disabled_by_config` / `scan_package_empty` — finding categories `missing_package`, `empty_package`; oversized-package path (>500 MB threshold) exists in production but not exercised in tests.
 - `scan_results_recorded_in_history` — every scan appends to `scan_history`.
 - `aegis_stats_empty_daemon` / `aegis_stats_accuracy` — snapshot reflects events / unresolved / quarantined / scans-completed / per-level threat counts.
+
+Slice 5 (database surface):
+
+- `database_security_policy_defaults` / `database_kernel_recommendations` — defaults match rust-old (`/var/lib/postgresql/data`, `/var/lib/redis`, audit_ddl on, max 10 conns, socket-perm checks on, 4 kernel-tuning recs covering `vm.overcommit_memory` / `vm.swappiness` / `net.core.somaxconn` / `kernel.shmmax`).
+- `database_integrity_check_nonexistent_dirs` / `database_integrity_check_records_scan` — quiet on missing dirs; scan recorded with target `database-services`, `ST_PERIODIC`.
+- `database_integrity_world_accessible_dir` — creates `/tmp/aegis_pgdata_test` at `0o777`, points policy at it, asserts `database_permissions` finding (severity `High`).
+- `audit_ddl_operation_creates_event` / `audit_ddl_operation_no_agent` — emits `EV_DATABASE_INTEGRITY` events at `THREAT_INFO` with `ddl_operation` + `ddl_object` metadata; works with `agent_id = 0` (None).
+- `database_access_violation_quarantines_agent` / `database_access_violation_metadata` — `EV_DATABASE_ACCESS_VIOLATION` at `THREAT_HIGH` triggers auto-quarantine (`QA_SUSPEND`) under default config; metadata carries `database` + `violation_reason`.
+- `database_event_types_distinguishable` — sanity check that the two database event-type constants differ from each other and from generic integrity.
 
 Bench / fuzz harnesses (`tests/aegis.bcyr`, `tests/aegis.fcyr`) remain stubs.
 

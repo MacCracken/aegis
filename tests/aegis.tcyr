@@ -486,6 +486,146 @@ fn test_aegis_stats_empty_daemon() {
     return 0;
 }
 
+fn _ktr_param_streq(ktr, expect_cstr) {
+    return streq(str_data(ktr_parameter(ktr)), expect_cstr);
+}
+
+fn _kt_has_parameter(kt_vec, param_cstr) {
+    var n = vec_len(kt_vec);
+    var i = 0;
+    while (i < n) {
+        if (_ktr_param_streq(vec_get(kt_vec, i), param_cstr) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn test_database_security_policy_defaults() {
+    test_group("database_security_policy_defaults");
+    var p = database_security_policy_default();
+    assert_streq(str_data(dbpolicy_postgres_data_dir(p)),
+                 "/var/lib/postgresql/data", "postgres_data_dir default");
+    assert_streq(str_data(dbpolicy_redis_data_dir(p)),
+                 "/var/lib/redis", "redis_data_dir default");
+    assert_eq(dbpolicy_audit_ddl(p),                 1,  "audit_ddl default true");
+    assert_eq(dbpolicy_max_connections_per_agent(p), 10, "max_connections_per_agent 10");
+    assert_eq(dbpolicy_check_socket_permissions(p),  1,  "check_socket_permissions true");
+    assert_eq(vec_len(dbpolicy_kernel_tuning(p)),    4,  "4 kernel tuning recs");
+    return 0;
+}
+
+fn test_database_kernel_recommendations() {
+    test_group("database_kernel_recommendations");
+    var p = database_security_policy_default();
+    var kt = aegis_database_kernel_recommendations(p);
+    assert_eq(vec_len(kt), 4, "4 recommendations");
+    assert_eq(_kt_has_parameter(kt, "vm.overcommit_memory"), 1, "vm.overcommit_memory present");
+    assert_eq(_kt_has_parameter(kt, "vm.swappiness"),        1, "vm.swappiness present");
+    assert_eq(_kt_has_parameter(kt, "net.core.somaxconn"),   1, "net.core.somaxconn present");
+    assert_eq(_kt_has_parameter(kt, "kernel.shmmax"),        1, "kernel.shmmax present");
+    return 0;
+}
+
+fn test_database_integrity_check_nonexistent_dirs() {
+    test_group("database_integrity_check_nonexistent_dirs");
+    var d = aegis_new(aegis_config_default());
+    var p = database_security_policy_default();
+    dbpolicy_set_postgres_data_dir(p, str_from("/nonexistent/pgdata"));
+    dbpolicy_set_redis_data_dir(p,    str_from("/nonexistent/redis"));
+    dbpolicy_set_check_socket_permissions(p, 0);
+    var findings = aegis_check_database_integrity(d, p);
+    assert_eq(vec_len(findings), 0, "nonexistent dirs produce no findings");
+    return 0;
+}
+
+fn test_database_integrity_check_records_scan() {
+    test_group("database_integrity_check_records_scan");
+    var d = aegis_new(aegis_config_default());
+    var p = database_security_policy_default();
+    aegis_check_database_integrity(d, p);
+    assert_eq(vec_len(aegis_scan_history(d)), 1, "scan recorded");
+    var r = vec_get(aegis_scan_history(d), 0);
+    assert_streq(str_data(scan_target(r)), "database-services", "target = database-services");
+    assert_eq(scan_type_of(r), ST_PERIODIC, "scan_type = periodic");
+    return 0;
+}
+
+fn test_database_integrity_world_accessible_dir() {
+    test_group("database_integrity_world_accessible_dir");
+    var pgdir = "/tmp/aegis_pgdata_test";
+    sys_mkdir(pgdir, 0x1FF);  # 0o777 — world rwx
+    sys_chmod(pgdir, 0x1FF);
+    var d = aegis_new(aegis_config_default());
+    var p = database_security_policy_default();
+    dbpolicy_set_postgres_data_dir(p, str_from(pgdir));
+    dbpolicy_set_redis_data_dir(p,    str_from("/nonexistent/redis"));
+    dbpolicy_set_check_socket_permissions(p, 0);
+    var findings = aegis_check_database_integrity(d, p);
+    assert_eq(_findings_have_category(findings, "database_permissions"), 1,
+              "world-accessible pgdir flagged as database_permissions");
+    sys_rmdir(pgdir);
+    return 0;
+}
+
+fn test_audit_ddl_operation_creates_event() {
+    test_group("audit_ddl_operation_creates_event");
+    var d = aegis_new(aegis_config_default());
+    aegis_audit_ddl_operation(d, "test-agent", "CREATE TABLE", "users");
+    var events = aegis_events_for_agent(d, "test-agent");
+    assert_eq(vec_len(events), 1, "one event for test-agent");
+    var e = vec_get(events, 0);
+    assert_eq(event_kind(e),         EV_DATABASE_INTEGRITY, "kind = database_integrity");
+    assert_eq(event_threat_level(e), THREAT_INFO,           "threat = info");
+    var op_v = event_metadata_get(e, "ddl_operation");
+    var ob_v = event_metadata_get(e, "ddl_object");
+    assert_neq(op_v, 0, "ddl_operation key present");
+    assert_neq(ob_v, 0, "ddl_object key present");
+    assert_streq(str_data(op_v), "CREATE TABLE", "ddl_operation value");
+    assert_streq(str_data(ob_v), "users",        "ddl_object value");
+    return 0;
+}
+
+fn test_audit_ddl_operation_no_agent() {
+    test_group("audit_ddl_operation_no_agent");
+    var d = aegis_new(aegis_config_default());
+    aegis_audit_ddl_operation(d, 0, "DROP DATABASE", "old_db");
+    assert_eq(aegis_total_events(d), 1, "event still recorded with no agent");
+    return 0;
+}
+
+fn test_database_access_violation_quarantines_agent() {
+    test_group("database_access_violation_quarantines_agent");
+    var d = aegis_new(aegis_config_default());
+    var action = aegis_report_database_access_violation(
+        d, "malicious", "admin_db", "cross-namespace access");
+    # High threat with default config (quarantine_on_high=1) → suspend
+    assert_eq(action,                                 QA_SUSPEND, "Suspend on High");
+    assert_eq(aegis_is_quarantined(d, "malicious"),  1,          "malicious quarantined");
+    var events = aegis_events_for_agent(d, "malicious");
+    assert_eq(vec_len(events),                          1, "one event recorded");
+    assert_eq(event_kind(vec_get(events, 0)),
+              EV_DATABASE_ACCESS_VIOLATION, "kind = database_access_violation");
+    return 0;
+}
+
+fn test_database_access_violation_metadata() {
+    test_group("database_access_violation_metadata");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_database_access_violation(d, "test-agent", "other_agent_db", "cross-tenant access");
+    var events = aegis_events_for_agent(d, "test-agent");
+    var e = vec_get(events, 0);
+    assert_streq(str_data(event_metadata_get(e, "database")),         "other_agent_db",       "database value");
+    assert_streq(str_data(event_metadata_get(e, "violation_reason")), "cross-tenant access",  "violation_reason value");
+    return 0;
+}
+
+fn test_database_event_types_distinguishable() {
+    test_group("database_event_types_distinguishable");
+    assert_neq(EV_DATABASE_INTEGRITY,        EV_DATABASE_ACCESS_VIOLATION, "DB integrity != DB access violation");
+    assert_neq(EV_DATABASE_INTEGRITY,        EV_INTEGRITY_VIOLATION,       "DB integrity != generic integrity violation");
+    return 0;
+}
+
 fn test_aegis_stats_accuracy() {
     test_group("aegis_stats_accuracy");
     var d = aegis_new(aegis_config_default());
@@ -562,6 +702,16 @@ fn main() {
     test_scan_results_recorded_in_history();
     test_aegis_stats_empty_daemon();
     test_aegis_stats_accuracy();
+    test_database_security_policy_defaults();
+    test_database_kernel_recommendations();
+    test_database_integrity_check_nonexistent_dirs();
+    test_database_integrity_check_records_scan();
+    test_database_integrity_world_accessible_dir();
+    test_audit_ddl_operation_creates_event();
+    test_audit_ddl_operation_no_agent();
+    test_database_access_violation_quarantines_agent();
+    test_database_access_violation_metadata();
+    test_database_event_types_distinguishable();
     return assert_summary();
 }
 
