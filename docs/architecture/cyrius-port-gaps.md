@@ -11,7 +11,7 @@
 | Rust dep | Cyrius equivalent | Status |
 |----------|------------------|--------|
 | `chrono` (DateTime/Duration/Utc) | `lib/chrono.cyr` — `clock_epoch_secs`, `iso8601(epoch)`, `iso8601_now`, `dur_new(secs, nsecs)`, `sleep_ms` | covered |
-| `serde` + `serde_json` | `lib/json.cyr` — `json_parse`, `json_get`, `json_build`. **No derive.** | partial — every record needs hand-rolled `*_to_json` / `*_from_json` |
+| `serde` + `serde_json` | `lib/json.cyr` typed-value tree API (`json_v_obj_new`, `json_v_str_new`, `json_v_int_new`, `json_v_bool_new`, `json_v_arr_new`, `json_v_obj_set`, `json_v_arr_push`, `json_v_parse`, `json_v_build`). | **done in 0.8.0**. All 8 records gain `*_to_json` / `*_from_json` plus enum `*_serde` / `*_from_serde` (PascalCase variant names). Wire format mirrors rust-old's serde_json output: snake_case field names, RFC 3339 timestamps, nested objects/arrays, `null` for `Option::None`. **Caveat to remember:** `json_v_obj_set` takes a `Str` key but `json_v_obj_get` takes a **cstr** — passing `str_from(...)` to obj_get silently misses every field (strlen walks the Str struct as garbage). |
 | `tracing` (`info!`/`warn!`/`debug!` + spans) | `lib/sakshi.cyr` (full v2.2.3 bundle — used directly, **not** via `lib/log.cyr`) | **done in 0.7.0**. Spans wrap 10 mutating daemon entry points; logfmt `key=value` messages via `_aegis_log_emit_{info,warn,debug}` + `_aegis_log_kv_*` helpers. Trampoline pattern keeps the span stack balanced across all early-return paths. Spans gated below `SK_INFO` so tests/benches at `SK_ERROR` stay silent. Note: sakshi v2.2.3's actual severity scale is `SK_FATAL=0, SK_ERROR=1, SK_WARN=2, SK_INFO=3, SK_DEBUG=4, SK_TRACE=5` — `lib/log.cyr`'s mapping comment is stale for this version. |
 | `uuid` (`Uuid::new_v4`) | **agnostik** v1.0.0 `src/types.cyr` — `agent_id_new()` returns a 16-byte v4 UUID buffer (getrandom + `/dev/urandom` fallback, version/variant nibbles set, audit-reviewed Apr 2026). | **done in 0.6.0**. `[deps.agnostik]` declared in `cyrius.cyml`; `aegis_next_id` calls `agent_id_new()` and renders via the local `_aegis_uuid_to_string(buf16)` helper (heap-allocated 37-byte buffer per call, 8-4-4-4-12 hyphenated lowercase hex). |
 | `nein` (firewall feature) | `~/Repos/nein` cyrius port v1.0.0 — pinned to **cyrius 4.5.0**, ~5 minor versions stale | **deferred.** Wait until nein bumps to a modern cyrius pin before porting `rust-old/src/firewall.rs`. Until then: `firewall.rs` stays in `rust-old/` as the spec, no cyrius equivalent shipped, no `[deps.nein]` in the manifest, no firewall module in `src/`. The aegis daemon ships without quarantine-via-firewall enforcement until that lands. |
@@ -25,12 +25,12 @@
 | `enum SecurityEventType` (12 variants) | integer constants; add `event_type_label(t) → cstr` for `Display`. |
 | `enum QuarantineAction` (4) / `enum ScanType` (4) | integer constants. |
 | `struct SecurityEvent { id, timestamp, event_type, source, agent_id, threat_level, description, metadata, resolved }` | record at offsets: `id@0` (Str ptr), `timestamp@8` (i64 epoch s), `event_type@16` (i64), `source@24` (Str ptr), `agent_id@32` (Str ptr or 0), `threat_level@40` (i64), `description@48` (Str ptr), `metadata@56` (map ptr), `resolved@64` (i64 0/1). Total 72 B. |
-| `struct QuarantineEntry { agent_id, reason, quarantined_at, threat_level, events: Vec<String>, auto_release_at: Option<DateTime> }` | record. `events` → `vec` of Str ptrs. `auto_release_at` → tagged Option (`lib/tagged.cyr`'s `Some`/`None`) **not** epoch=0 sentinel — 1970-01-01 collides. |
+| `struct QuarantineEntry { agent_id, reason, quarantined_at, threat_level, events: Vec<String>, auto_release_at: Option<DateTime> }` | 48 B record. `events` → `vec` of Str ptrs. `auto_release_at` uses `AEGIS_AUTO_RELEASE_NONE = -1` sentinel (epoch=0 collision risk wasn't material in practice — rust callers never pass 1970-01-01; tagged Option would have been over-engineering for one field). JSON serializes `-1` as `null`. |
 | `struct SecurityFinding`, `SecurityScanResult`, `AegisConfig`, `KernelTuningRecommendation`, `DatabaseSecurityPolicy`, `AegisStats` | each a fixed-offset record with `*_new` / accessors / setters. |
 | `HashMap<String, String>` (event metadata) | cstr-keyed `map_new()` from `lib/hashmap.cyr`, values are Str ptrs. **Note:** there are two hashmap flavors — `map_new()` is cstr-keyed, `map_new_str()` is `Str`-keyed (fat-pointer keys built via `str_from`). They are NOT interchangeable: a `map_new_str()` map dispatches to `hash_str_v` which calls `str_data`/`str_len` on the key, so feeding it a cstr does `load64` on chars and segfaults silently. Pick the one that matches what callers actually pass. (Hit during the quarantine slice — agent_id keys flow through as cstrs, so `map_new()`.) |
 | `HashMap<ThreatLevel, usize>` (threat counts) | int-keyed not native — simplest is a 5-slot `var counts[40]` indexed by `threat_level` (0..4). Avoids the hash overhead and gives O(1) iteration. |
-| `Vec<SecurityEvent>` (events log) | `vec` of event-record pointers. `vec_remove(v, 0)` per drop is O(n²) for `prune_events` — instead implement a ring-buffer or `vec_drain_front(v, n)` helper. |
-| `AegisSecurityDaemon { config, events, quarantine, scan_history, threat_counts }` | record. `quarantine` is `map_new_str()` keyed by agent_id. |
+| `Vec<SecurityEvent>` (events log) | `vec` of event-record pointers. **0.5.0 stopgap**: `_aegis_prune_events` rebuilds a new vec with the kept suffix instead of looping `vec_remove(v, 0)` (which would be O(n²) in drained count). Still O(n) per push once the cap is reached — bench shows `aegis_report_event` ≈ 220 µs avg at 50k iterations for that reason. **Planned 0.8.x fix**: ring-buffer record (head, tail, mask, slots). |
+| `AegisSecurityDaemon { config, events, quarantine, scan_history, threat_counts }` | 72 B record. `quarantine` is **cstr-keyed** `map_new()` (lazy-init on first quarantine), not `map_new_str()` — see hashmap-flavor caveat below. |
 
 ## Behavioral / API divergences to expect
 
@@ -50,15 +50,17 @@
 
 ## Missing functionality to write (estimated effort)
 
-| Item | Lines | Notes |
-|------|-------|-------|
-| ~~`uuid_to_string(buf16) → Str`~~ | done | `_aegis_uuid_to_string` shipped in 0.6.0. |
-| `vec_drain_front(v, n)` or ring buffer | ~40 | for `prune_events` correctness at 10k cap |
-| `tmp_dir_new()` / `tmp_dir_drop(path)` | ~25 | tests/scaffolding |
-| `stat_mode(path) → mode_or_-1` | ~15 | sys_stat wrapper |
-| Per-record JSON serialize/deserialize | ~250 | 8 records × ~30 LOC each, mechanical against `lib/json.cyr` |
-| Enum `*_label(t) → cstr` for `ThreatLevel`, `SecurityEventType`, `ScanType`, `QuarantineAction` | ~80 | matches Rust `Display` |
-| `event_type_from_label(cstr) → t` (deserialize) | ~80 | inverse of above |
+| Item | Lines | Status |
+|------|-------|--------|
+| `_aegis_uuid_to_string(buf16) → Str` | ~30 | **done in 0.6.0** |
+| `_aegis_stat_modesize(path, out16)` | ~15 | **done in 0.5.0** (slice 4) |
+| `_tmp_write` / `_tmp_unlink` test helpers | ~10 | **done in 0.5.0** (inline in `tests/aegis.tcyr`) |
+| Enum `*_label(t)` (Display, snake_case) for `ThreatLevel`, `SecurityEventType`, `ScanType`, `QuarantineAction` | ~80 | **done in 0.5.0** |
+| Enum `*_serde(t)` / `*_from_serde(cstr)` (PascalCase, JSON wire format) for the same four enums | ~80 | **done in 0.8.0** |
+| Per-record JSON serialize/deserialize (8 records × `*_to_json` / `*_from_json` + tree-helper layer) | ~600 | **done in 0.8.0** |
+| Ring-buffer for events log (kills the O(n) prune-and-rebuild) | ~40 | **planned 0.8.x** |
+| Real fuzz targets for the JSON parsers (currently `tests/aegis.fcyr` is a stub) | ~50 | **planned 0.8.x** |
+| ADRs for load-bearing decisions (sentinel choices, cstr API boundary, integer-array threat-counts, hashmap flavor selection) | ~200 | **planned 0.8.x** |
 
 ## Toolchain / manifest fixups
 

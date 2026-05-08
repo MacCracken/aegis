@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-08
+
+**JSON serde for the full record surface.** All 8 records (`SecurityEvent`, `QuarantineEntry`, `SecurityFinding`, `SecurityScanResult`, `AegisConfig`, `KernelTuningRecommendation`, `DatabaseSecurityPolicy`, `AegisStats`) gain `*_to_json` / `*_from_json` with roundtrip tests. Wire format mirrors rust-old's `serde_json` rendering. Cyrius pin: `5.10.0`.
+
+### Added
+
+- `json` to `[deps].stdlib`; `[deps.agnostik].modules` extended to include `src/error.cyr` (agnostik's `src/types.cyr` references `err_invalid_argument` from there in parser paths we don't call; pulling it in silences the link warning).
+- 4 enum serde-label round-trips (PascalCase variant names, matching `serde`'s default for unit variants without `#[serde(rename_all = ...)]`):
+  - `threat_level_serde` / `threat_level_from_serde` (`Critical / High / Medium / Low / Info`)
+  - `event_type_serde` / `event_type_from_serde` (12 variants: `IntegrityViolation` … `DatabaseAccessViolation`)
+  - `quarantine_action_serde` / `quarantine_action_from_serde` (`None / Suspend / Terminate / Isolate / RateLimit`)
+  - `scan_type_serde` / `scan_type_from_serde` (`OnInstall / OnExecute / Periodic / Manual`)
+- jv-tree helpers (`_aegis_jv_set_*`, `_aegis_jv_get_*`) layered over `lib/json.cyr`'s typed-value tree API (`json_v_obj_new`, `json_v_str_new`, `json_v_int_new`, `json_v_bool_new`, `json_v_arr_new`, `json_v_obj_set`, `json_v_arr_push`, `json_v_parse`, `json_v_build`).
+- 16 record (de)serializers — for each record, both `<name>_to_json_v(rec) → json_v*` (tree) and `<name>_to_json(rec) → Str` (rendered) plus the parse-side equivalents.
+- 16 new test groups, **84 new assertions** covering enum roundtrips, basic record roundtrips, edge cases (`Option::None → null` for `agent_id` / `auto_release_at` / `auto_release_timeout_secs`; nested `metadata` map; vec fields like `events` / `findings` / `kernel_tuning`; nested `threat_counts` object). Total: **239 passed / 0 failed** across 69 test groups.
+
+### Wire format
+
+- Field names: snake_case, exactly as the rust struct fields.
+- Enum unit variants: PascalCase variant names.
+- Timestamps: RFC 3339 / ISO 8601 strings via `iso8601(epoch)` / `iso8601_parse`.
+- `Option<T>`: `null` when None, value otherwise.
+- `HashMap<String, String>` (event metadata): nested JSON object.
+- `HashMap<ThreatLevel, usize>` (threat counts): nested object with PascalCase keys.
+
+### Notes / lessons
+
+- `lib/json.cyr` has two key conventions, **easy to mix up**: `json_v_obj_set(obj, key, val)` stores `key` as a `Str`; `json_v_obj_get(obj, key)` looks up by **cstr**. Found this the hard way — passing `str_from(key_cstr)` to `obj_get` makes `strlen` walk the Str struct as if it were a cstr, returning a garbage length and silently missing every field. All `_aegis_jv_get_*` helpers pass cstr to `obj_get`; `_aegis_jv_set_*` wrap with `str_from` for `obj_set`.
+- `aegis_audit_ddl_operation` and friends already populate `event.metadata` — the new SecurityEvent serde lights that wire path up automatically, so DB audit events ship to consumers as full nested-metadata JSON objects without extra glue.
+
 ## [0.7.0] — 2026-05-08
 
 **Sakshi-full structured logging.** Spans wrap every mutating daemon entry point; severity-tagged logfmt-style messages emit on the major transitions (event reported, auto-quarantine, manual quarantine, release, scan skipped/started, db-integrity findings). Cyrius pin: `5.10.0`.

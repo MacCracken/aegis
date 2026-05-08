@@ -5,7 +5,7 @@
 
 ## Version
 
-**0.7.0** — sakshi-full structured logging (2026-05-08). Spans wrap 10 mutating daemon entry points; logfmt `key=value` messages emit at INFO/WARN/DEBUG mirroring the prior tracing! macros. Spans gated below `SK_INFO` so tests/benches stay silent at `SK_ERROR`. Sakshi v2.2.3's actual severity scale is `FATAL=0..TRACE=5` (`lib/log.cyr`'s inverse mapping comment is stale).
+**0.8.0** — JSON serde for the full record surface (2026-05-08). All 8 records gain `*_to_json` / `*_from_json` plus enum `*_serde` / `*_from_serde` (PascalCase variants). Wire format mirrors rust-old's serde_json: snake_case fields, RFC 3339 timestamps, nested objects/arrays, `null` for `Option::None`. Built on `lib/json.cyr`'s typed-value tree API.
 
 ## Toolchain
 
@@ -23,8 +23,7 @@
   - Daemon API (cstrs for `agent_id` / `event_id` / path parameters): `aegis_new`, `aegis_report_event` (records + auto-quarantine; returns `QuarantineAction`), `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`, `aegis_scan_agent`, `aegis_scan_package`, `aegis_stats`, `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`, `aegis_database_kernel_recommendations`.
   - `src/main.cyr` — thin entry that includes `src/lib.cyr`.
 - Still deferred (post-parity polish):
-  - **0.8.0** — JSON serde (hand-rolled `*_to_json` / `*_from_json` per record).
-  - **0.8.x** — ring-buffer for events (kills the O(n) prune-and-rebuild perf hit), real fuzz targets, ADRs for load-bearing decisions, `bench-history.csv` baseline, `scripts/audit.sh`. Optional: trace-ID propagation (`sakshi_trace_set`) once a wire format exists.
+  - **0.8.x** — ring-buffer for events (kills the O(n) prune-and-rebuild perf hit; current `aegis_report_event` ≈ 220 µs avg at 50k iter), real fuzz targets for the JSON parsers, ADRs for load-bearing decisions (sentinel choices, cstr API boundary, hashmap flavor selection), `bench-history.csv` baseline, `scripts/audit.sh`. Optional: trace-ID propagation (`sakshi_trace_set`) once a multi-process wire flow exists.
   - **0.9.0** — V1 prep: API-surface snapshot, full audit, doc polish.
   - **1.0.0** — first stable. API freeze. Firewall stays out per user call (lands in 1.x once nein modernises its `cyrius = "4.5.0"` pin).
   - All scoped in `docs/architecture/cyrius-port-gaps.md`.
@@ -79,8 +78,8 @@ Bench / fuzz harnesses (`tests/aegis.bcyr`, `tests/aegis.fcyr`) remain stubs.
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap, bench, fnptr, sakshi
-- agnostik (v1.0.0) — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`)
+- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap, bench, fnptr, sakshi, json
+- agnostik (v1.0.0) — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by types.cyr's parser paths we don't call, but the compiler needs the symbol)
 
 ## Consumers
 

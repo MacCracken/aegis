@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.7.0** — sakshi-full structured logging. Spans wrap every mutating daemon entry point; logfmt-style `"<msg> key=val key=val"` emits on the major transitions. 53 test groups / 155 assertions. Event IDs are RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
+**0.8.0** — JSON serde for the full record surface. All 8 records gain `*_to_json` / `*_from_json` with wire format compatible with rust-old's `serde_json` rendering (snake_case keys, PascalCase enum variants, RFC 3339 timestamps, nested objects/arrays, `null` for `Option::None`). 69 test groups / 239 assertions. Sakshi-full structured logging from 0.7.0 (spans + logfmt key=val on the major transitions). Event IDs are RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
 
 ## Quick Start
 

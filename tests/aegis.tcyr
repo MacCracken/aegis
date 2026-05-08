@@ -657,6 +657,227 @@ fn test_config_auto_release_populates_entry() {
     return 0;
 }
 
+fn test_threat_level_serde_roundtrip() {
+    test_group("threat_level_serde_roundtrip");
+    var i = 0;
+    while (i < 5) {
+        var label = threat_level_serde(i);
+        var back = threat_level_from_serde(label);
+        assert_eq(back, i, "threat level label round-trips");
+        i = i + 1;
+    }
+    assert_eq(threat_level_from_serde("Bogus"), 0 - 1, "unknown label returns -1");
+    return 0;
+}
+
+fn test_event_type_serde_roundtrip() {
+    test_group("event_type_serde_roundtrip");
+    var i = 0;
+    while (i < 12) {
+        var label = event_type_serde(i);
+        var back = event_type_from_serde(label);
+        assert_eq(back, i, "event type label round-trips");
+        i = i + 1;
+    }
+    assert_streq(event_type_serde(EV_INTEGRITY_VIOLATION), "IntegrityViolation", "PascalCase label");
+    return 0;
+}
+
+fn test_quarantine_action_serde_roundtrip() {
+    test_group("quarantine_action_serde_roundtrip");
+    assert_streq(quarantine_action_serde(QA_NONE),      "None",      "None label");
+    assert_streq(quarantine_action_serde(QA_TERMINATE), "Terminate", "Terminate label");
+    assert_streq(quarantine_action_serde(QA_RATELIMIT), "RateLimit", "RateLimit label");
+    var i = 0;
+    while (i < 5) {
+        assert_eq(quarantine_action_from_serde(quarantine_action_serde(i)), i, "qa round-trips");
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn test_scan_type_serde_roundtrip() {
+    test_group("scan_type_serde_roundtrip");
+    var i = 0;
+    while (i < 4) {
+        assert_eq(scan_type_from_serde(scan_type_serde(i)), i, "scan type round-trips");
+        i = i + 1;
+    }
+    assert_streq(scan_type_serde(ST_ON_INSTALL), "OnInstall", "PascalCase label");
+    return 0;
+}
+
+fn test_ktr_json_roundtrip() {
+    test_group("ktr_json_roundtrip");
+    var k = ktr_new("vm.swappiness", "1", "minimize swap");
+    var json = ktr_to_json(k);
+    var k2 = ktr_from_json(json);
+    assert_neq(k2, 0, "non-null parse");
+    assert_streq(str_data(ktr_parameter(k2)),         "vm.swappiness", "parameter");
+    assert_streq(str_data(ktr_recommended_value(k2)), "1",             "recommended_value");
+    assert_streq(str_data(ktr_reason(k2)),            "minimize swap", "reason");
+    return 0;
+}
+
+fn test_finding_json_roundtrip() {
+    test_group("finding_json_roundtrip");
+    var f = finding_new(THREAT_HIGH, str_from("missing_binary"),
+    str_from("Binary not found at /tmp/x"),
+    str_from("Verify install"));
+    var json = finding_to_json(f);
+    var f2 = finding_from_json(json);
+    assert_neq(f2, 0, "non-null parse");
+    assert_eq(finding_severity(f2),               THREAT_HIGH,         "severity round-trips");
+    assert_streq(str_data(finding_category(f2)),    "missing_binary",    "category");
+    assert_streq(str_data(finding_description(f2)), "Binary not found at /tmp/x", "description");
+    return 0;
+}
+
+fn test_scan_result_json_roundtrip() {
+    test_group("scan_result_json_roundtrip");
+    var d = aegis_new(aegis_config_default());
+    var r = aegis_scan_agent(d, "agent-z", "/nonexistent/foo");
+    var json = scan_result_to_json(r);
+    var r2 = scan_result_from_json(json);
+    assert_neq(r2, 0, "non-null parse");
+    assert_streq(str_data(scan_target(r2)), "agent:agent-z", "target");
+    assert_eq(scan_type_of(r2),             ST_ON_EXECUTE,    "scan_type");
+    assert_eq(scan_clean(r2),               0,                "clean=false");
+    assert_eq(vec_len(scan_findings(r2)),   1,                "1 finding round-tripped");
+    return 0;
+}
+
+fn test_aegis_config_json_roundtrip() {
+    test_group("aegis_config_json_roundtrip");
+    var c = aegis_config_default();
+    aegis_config_set_max_events(c, 7777);
+    aegis_config_set_auto_release_timeout_secs(c, 1234);
+    var json = aegis_config_to_json(c);
+    var c2 = aegis_config_from_json(json);
+    assert_neq(c2, 0, "non-null parse");
+    assert_eq(aegis_config_scan_on_install(c2),        1,    "scan_on_install");
+    assert_eq(aegis_config_max_events(c2),             7777, "max_events");
+    assert_eq(aegis_config_auto_release_timeout_secs(c2), 1234, "auto_release_timeout_secs");
+    return 0;
+}
+
+fn test_aegis_config_json_auto_release_none() {
+    test_group("aegis_config_json_auto_release_none");
+    var c = aegis_config_default();  # default: auto_release_timeout_secs = -1 (None)
+    var json = aegis_config_to_json(c);
+    # Output should serialize to JSON null, not -1
+    assert_eq(str_contains(json, str_from("\"auto_release_timeout_secs\":null")), 1,
+    "None serializes as null");
+    var c2 = aegis_config_from_json(json);
+    assert_eq(aegis_config_auto_release_timeout_secs(c2), AEGIS_AUTO_RELEASE_NONE,
+    "null round-trips back to AEGIS_AUTO_RELEASE_NONE");
+    return 0;
+}
+
+fn test_dbpolicy_json_roundtrip() {
+    test_group("dbpolicy_json_roundtrip");
+    var p = database_security_policy_default();
+    var json = dbpolicy_to_json(p);
+    var p2 = dbpolicy_from_json(json);
+    assert_neq(p2, 0, "non-null parse");
+    assert_streq(str_data(dbpolicy_postgres_data_dir(p2)), "/var/lib/postgresql/data", "pg dir");
+    assert_streq(str_data(dbpolicy_redis_data_dir(p2)),    "/var/lib/redis",           "redis dir");
+    assert_eq(dbpolicy_audit_ddl(p2),                      1,                          "audit_ddl");
+    assert_eq(dbpolicy_max_connections_per_agent(p2),      10,                         "max_connections");
+    assert_eq(vec_len(dbpolicy_kernel_tuning(p2)),         4,                          "4 kernel tunings");
+    return 0;
+}
+
+fn test_aegis_stats_json_roundtrip() {
+    test_group("aegis_stats_json_roundtrip");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW,    "a"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW,    "b"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_MEDIUM, "c"));
+    var s = aegis_stats(d);
+    var json = aegis_stats_to_json(s);
+    var s2 = aegis_stats_from_json(json);
+    assert_neq(s2, 0, "non-null parse");
+    assert_eq(stats_total_events(s2),                3, "total");
+    assert_eq(stats_threat_count(s2, THREAT_LOW),    2, "low count round-trips");
+    assert_eq(stats_threat_count(s2, THREAT_MEDIUM), 1, "medium count round-trips");
+    assert_eq(stats_threat_count(s2, THREAT_INFO),   0, "info count round-trips as 0");
+    return 0;
+}
+
+fn test_quarantine_entry_json_roundtrip() {
+    test_group("quarantine_entry_json_roundtrip");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_SANDBOX_ESCAPE, "t", "agent-q", THREAT_CRITICAL, "boom1"));
+    aegis_report_event(d, security_event_new(EV_MALICIOUS_PAYLOAD, "t", "agent-q", THREAT_CRITICAL, "boom2"));
+    var q = aegis_get_quarantine(d, "agent-q");
+    var json = quarantine_entry_to_json(q);
+    var q2 = quarantine_entry_from_json(json);
+    assert_neq(q2, 0, "non-null parse");
+    assert_streq(str_data(q_agent_id(q2)), "agent-q",         "agent_id");
+    assert_eq(q_threat_level(q2),          THREAT_CRITICAL,   "threat_level");
+    assert_eq(vec_len(q_events(q2)),       2,                 "2 events linked");
+    return 0;
+}
+
+fn test_quarantine_entry_json_auto_release_none() {
+    test_group("quarantine_entry_json_auto_release_none");
+    var d = aegis_new(aegis_config_default());  # default: no auto_release timeout
+    var q = aegis_quarantine_agent(d, "agent-r", "test", THREAT_HIGH);
+    var json = quarantine_entry_to_json(q);
+    assert_eq(str_contains(json, str_from("\"auto_release_at\":null")), 1,
+    "None serializes as null");
+    var q2 = quarantine_entry_from_json(json);
+    assert_eq(q_auto_release_at(q2), AEGIS_AUTO_RELEASE_NONE,
+    "null round-trips to AEGIS_AUTO_RELEASE_NONE");
+    return 0;
+}
+
+fn test_security_event_json_roundtrip() {
+    test_group("security_event_json_roundtrip");
+    var ev = security_event_new(EV_SANDBOX_ESCAPE, "integrity", "agent-x", THREAT_CRITICAL, "boom");
+    var json = security_event_to_json(ev);
+    # Spot-check: PascalCase event_type label
+    assert_eq(str_contains(json, str_from("\"event_type\":\"SandboxEscape\"")), 1,
+    "event_type renders as PascalCase variant");
+    var ev2 = security_event_from_json(json);
+    assert_neq(ev2, 0, "non-null parse");
+    assert_eq(event_kind(ev2),                           EV_SANDBOX_ESCAPE, "kind");
+    assert_eq(event_threat_level(ev2),                   THREAT_CRITICAL,    "threat_level");
+    assert_streq(str_data(event_agent_id(ev2)),          "agent-x",          "agent_id");
+    assert_streq(str_data(event_source(ev2)),            "integrity",        "source");
+    assert_streq(str_data(event_description(ev2)),       "boom",             "description");
+    assert_eq(event_resolved(ev2),                       0,                  "resolved=false");
+    return 0;
+}
+
+fn test_security_event_json_no_agent_id() {
+    test_group("security_event_json_no_agent_id");
+    var ev = security_event_new(EV_POLICY_VIOLATION, "test", 0, THREAT_INFO, "x");
+    var json = security_event_to_json(ev);
+    assert_eq(str_contains(json, str_from("\"agent_id\":null")), 1, "None serializes as null");
+    var ev2 = security_event_from_json(json);
+    assert_eq(event_agent_id(ev2), 0, "null round-trips to 0 (None)");
+    return 0;
+}
+
+fn test_security_event_json_with_metadata() {
+    test_group("security_event_json_with_metadata");
+    var ev = security_event_new(EV_DATABASE_INTEGRITY, "database", "test-agent", THREAT_INFO, "DDL");
+    event_metadata_set(ev, "ddl_operation", str_from("CREATE TABLE"));
+    event_metadata_set(ev, "ddl_object",    str_from("users"));
+    var json = security_event_to_json(ev);
+    var ev2 = security_event_from_json(json);
+    assert_neq(ev2, 0, "non-null parse");
+    var meta = event_metadata(ev2);
+    assert_neq(meta, 0, "metadata map non-null");
+    assert_eq(map_has(meta, "ddl_operation"), 1, "ddl_operation key present");
+    assert_eq(map_has(meta, "ddl_object"),    1, "ddl_object key present");
+    assert_streq(str_data(map_get(meta, "ddl_operation")), "CREATE TABLE", "ddl_operation value");
+    assert_streq(str_data(map_get(meta, "ddl_object")),    "users",        "ddl_object value");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     # Silence aegis's structured logging during tests. SK_ERROR (=1)
@@ -717,6 +938,22 @@ fn main() {
     test_database_access_violation_quarantines_agent();
     test_database_access_violation_metadata();
     test_database_event_types_distinguishable();
+    test_threat_level_serde_roundtrip();
+    test_event_type_serde_roundtrip();
+    test_quarantine_action_serde_roundtrip();
+    test_scan_type_serde_roundtrip();
+    test_ktr_json_roundtrip();
+    test_finding_json_roundtrip();
+    test_scan_result_json_roundtrip();
+    test_aegis_config_json_roundtrip();
+    test_aegis_config_json_auto_release_none();
+    test_dbpolicy_json_roundtrip();
+    test_aegis_stats_json_roundtrip();
+    test_quarantine_entry_json_roundtrip();
+    test_quarantine_entry_json_auto_release_none();
+    test_security_event_json_roundtrip();
+    test_security_event_json_no_agent_id();
+    test_security_event_json_with_metadata();
     return assert_summary();
 }
 

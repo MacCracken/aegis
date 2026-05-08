@@ -1234,3 +1234,605 @@ fn _aegis_report_database_access_violation_inner(d, agent_id_cstr, database_cstr
 
     return aegis_report_event(d, ev);
 }
+
+# ================================================================
+# JSON serde — wire format compatible with rust-old's serde_json
+# rendering. Conventions:
+#   - Field names: snake_case, exactly as the rust struct fields.
+#   - Enum unit variants: PascalCase variant names (e.g.
+#     "Critical", "IntegrityViolation"). serde's default for unit
+#     variants without #[serde(rename_all = ...)].
+#   - Timestamps: RFC 3339 / ISO 8601 strings (chrono's default).
+#   - Option<T>: null when None, value when Some.
+#   - HashMap<String, String>: nested JSON object.
+#   - HashMap<ThreatLevel, usize>: nested object with PascalCase
+#     stringified keys ("Critical", "High", ...).
+#
+# Implementation uses lib/json.cyr's typed-value tree API
+# (json_v_*). Builders return Str; parsers return record* or 0 on
+# malformed input.
+# ================================================================
+
+# ---------- enum serde labels (PascalCase) -----------------------
+
+fn threat_level_serde(t) {
+    if (t == THREAT_CRITICAL) { return "Critical"; }
+    if (t == THREAT_HIGH)     { return "High"; }
+    if (t == THREAT_MEDIUM)   { return "Medium"; }
+    if (t == THREAT_LOW)      { return "Low"; }
+    if (t == THREAT_INFO)     { return "Info"; }
+    return "Unknown";
+}
+
+fn threat_level_from_serde(cstr) {
+    if (streq(cstr, "Critical") == 1) { return THREAT_CRITICAL; }
+    if (streq(cstr, "High")     == 1) { return THREAT_HIGH; }
+    if (streq(cstr, "Medium")   == 1) { return THREAT_MEDIUM; }
+    if (streq(cstr, "Low")      == 1) { return THREAT_LOW; }
+    if (streq(cstr, "Info")     == 1) { return THREAT_INFO; }
+    return 0 - 1;
+}
+
+fn event_type_serde(k) {
+    if (k == EV_INTEGRITY_VIOLATION)       { return "IntegrityViolation"; }
+    if (k == EV_ANOMALOUS_BEHAVIOR)        { return "AnomalousBehavior"; }
+    if (k == EV_UNAUTHORIZED_ACCESS)       { return "UnauthorizedAccess"; }
+    if (k == EV_SANDBOX_ESCAPE)            { return "SandboxEscape"; }
+    if (k == EV_NETWORK_VIOLATION)         { return "NetworkViolation"; }
+    if (k == EV_TRUST_VIOLATION)           { return "TrustViolation"; }
+    if (k == EV_FILESYSTEM_VIOLATION)      { return "FileSystemViolation"; }
+    if (k == EV_RESOURCE_EXHAUSTION)       { return "ResourceExhaustion"; }
+    if (k == EV_MALICIOUS_PAYLOAD)         { return "MaliciousPayload"; }
+    if (k == EV_POLICY_VIOLATION)          { return "PolicyViolation"; }
+    if (k == EV_DATABASE_INTEGRITY)        { return "DatabaseIntegrity"; }
+    if (k == EV_DATABASE_ACCESS_VIOLATION) { return "DatabaseAccessViolation"; }
+    return "Unknown";
+}
+
+fn event_type_from_serde(cstr) {
+    if (streq(cstr, "IntegrityViolation")      == 1) { return EV_INTEGRITY_VIOLATION; }
+    if (streq(cstr, "AnomalousBehavior")       == 1) { return EV_ANOMALOUS_BEHAVIOR; }
+    if (streq(cstr, "UnauthorizedAccess")      == 1) { return EV_UNAUTHORIZED_ACCESS; }
+    if (streq(cstr, "SandboxEscape")           == 1) { return EV_SANDBOX_ESCAPE; }
+    if (streq(cstr, "NetworkViolation")        == 1) { return EV_NETWORK_VIOLATION; }
+    if (streq(cstr, "TrustViolation")          == 1) { return EV_TRUST_VIOLATION; }
+    if (streq(cstr, "FileSystemViolation")     == 1) { return EV_FILESYSTEM_VIOLATION; }
+    if (streq(cstr, "ResourceExhaustion")      == 1) { return EV_RESOURCE_EXHAUSTION; }
+    if (streq(cstr, "MaliciousPayload")        == 1) { return EV_MALICIOUS_PAYLOAD; }
+    if (streq(cstr, "PolicyViolation")         == 1) { return EV_POLICY_VIOLATION; }
+    if (streq(cstr, "DatabaseIntegrity")       == 1) { return EV_DATABASE_INTEGRITY; }
+    if (streq(cstr, "DatabaseAccessViolation") == 1) { return EV_DATABASE_ACCESS_VIOLATION; }
+    return 0 - 1;
+}
+
+fn quarantine_action_serde(a) {
+    if (a == QA_SUSPEND)   { return "Suspend"; }
+    if (a == QA_TERMINATE) { return "Terminate"; }
+    if (a == QA_ISOLATE)   { return "Isolate"; }
+    if (a == QA_RATELIMIT) { return "RateLimit"; }
+    return "None";
+}
+
+fn quarantine_action_from_serde(cstr) {
+    if (streq(cstr, "Suspend")   == 1) { return QA_SUSPEND; }
+    if (streq(cstr, "Terminate") == 1) { return QA_TERMINATE; }
+    if (streq(cstr, "Isolate")   == 1) { return QA_ISOLATE; }
+    if (streq(cstr, "RateLimit") == 1) { return QA_RATELIMIT; }
+    if (streq(cstr, "None")      == 1) { return QA_NONE; }
+    return 0 - 1;
+}
+
+fn scan_type_serde(s) {
+    if (s == ST_ON_INSTALL) { return "OnInstall"; }
+    if (s == ST_ON_EXECUTE) { return "OnExecute"; }
+    if (s == ST_PERIODIC)   { return "Periodic"; }
+    if (s == ST_MANUAL)     { return "Manual"; }
+    return "Unknown";
+}
+
+fn scan_type_from_serde(cstr) {
+    if (streq(cstr, "OnInstall") == 1) { return ST_ON_INSTALL; }
+    if (streq(cstr, "OnExecute") == 1) { return ST_ON_EXECUTE; }
+    if (streq(cstr, "Periodic")  == 1) { return ST_PERIODIC; }
+    if (streq(cstr, "Manual")    == 1) { return ST_MANUAL; }
+    return 0 - 1;
+}
+
+# ---------- jv-tree builder helpers -----------------------------
+
+fn _aegis_jv_cstr(cstr) { return json_v_str_new(str_from(cstr)); }
+
+fn _aegis_jv_set(obj, key_cstr, val) {
+    if (val == 0) { val = json_v_null(); }
+    json_v_obj_set(obj, str_from(key_cstr), val);
+    return 0;
+}
+
+fn _aegis_jv_set_cstr(obj, key_cstr, value_cstr) {
+    json_v_obj_set(obj, str_from(key_cstr), _aegis_jv_cstr(value_cstr));
+    return 0;
+}
+
+fn _aegis_jv_set_str(obj, key_cstr, value_str) {
+    json_v_obj_set(obj, str_from(key_cstr), json_v_str_new(value_str));
+    return 0;
+}
+
+fn _aegis_jv_set_int(obj, key_cstr, n) {
+    json_v_obj_set(obj, str_from(key_cstr), json_v_int_new(n));
+    return 0;
+}
+
+fn _aegis_jv_set_bool(obj, key_cstr, b) {
+    json_v_obj_set(obj, str_from(key_cstr), json_v_bool_new(b));
+    return 0;
+}
+
+# ---------- jv-tree reader helpers ------------------------------
+
+fn _aegis_jv_get_cstr(obj, key_cstr) {
+    var v = json_v_obj_get(obj, key_cstr);
+    if (v == 0) { return 0; }
+    if (json_v_is_str(v) == 0) { return 0; }
+    return str_data(json_v_str(v));
+}
+
+fn _aegis_jv_get_str(obj, key_cstr) {
+    var v = json_v_obj_get(obj, key_cstr);
+    if (v == 0) { return 0; }
+    if (json_v_is_str(v) == 0) { return 0; }
+    return json_v_str(v);
+}
+
+fn _aegis_jv_get_int(obj, key_cstr) {
+    var v = json_v_obj_get(obj, key_cstr);
+    if (v == 0) { return 0; }
+    return json_v_int(v);
+}
+
+fn _aegis_jv_get_bool(obj, key_cstr) {
+    var v = json_v_obj_get(obj, key_cstr);
+    if (v == 0) { return 0; }
+    return json_v_bool(v);
+}
+
+# ---------- KernelTuningRecommendation ---------------------------
+
+fn ktr_to_json_v(k) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_str(v, "parameter",         ktr_parameter(k));
+    _aegis_jv_set_str(v, "recommended_value", ktr_recommended_value(k));
+    _aegis_jv_set_str(v, "reason",            ktr_reason(k));
+    return v;
+}
+
+fn ktr_to_json(k) { return json_v_build(ktr_to_json_v(k)); }
+
+fn ktr_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var p = _aegis_jv_get_cstr(v, "parameter");
+    var r = _aegis_jv_get_cstr(v, "recommended_value");
+    var why = _aegis_jv_get_cstr(v, "reason");
+    if (p == 0)   { p = ""; }
+    if (r == 0)   { r = ""; }
+    if (why == 0) { why = ""; }
+    return ktr_new(p, r, why);
+}
+
+fn ktr_from_json(json_str) { return ktr_from_json_v(json_v_parse(json_str)); }
+
+# ---------- SecurityFinding -------------------------------------
+
+fn finding_to_json_v(f) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_cstr(v, "severity",       threat_level_serde(finding_severity(f)));
+    _aegis_jv_set_str(v,  "category",       finding_category(f));
+    _aegis_jv_set_str(v,  "description",    finding_description(f));
+    _aegis_jv_set_str(v,  "recommendation", finding_recommendation(f));
+    return v;
+}
+
+fn finding_to_json(f) { return json_v_build(finding_to_json_v(f)); }
+
+fn finding_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var sev_cstr = _aegis_jv_get_cstr(v, "severity");
+    var sev = THREAT_INFO;
+    if (sev_cstr != 0) {
+        var parsed = threat_level_from_serde(sev_cstr);
+        if (parsed >= 0) { sev = parsed; }
+    }
+    var cat = _aegis_jv_get_str(v, "category");
+    var desc = _aegis_jv_get_str(v, "description");
+    var rec = _aegis_jv_get_str(v, "recommendation");
+    if (cat == 0)  { cat = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    if (rec == 0)  { rec = str_from(""); }
+    return finding_new(sev, cat, desc, rec);
+}
+
+fn finding_from_json(json_str) { return finding_from_json_v(json_v_parse(json_str)); }
+
+# ---------- SecurityScanResult ----------------------------------
+
+fn scan_result_to_json_v(r) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_cstr(v, "scanned_at", iso8601(scan_scanned_at(r)));
+    _aegis_jv_set_str(v,  "target",     scan_target(r));
+    _aegis_jv_set_cstr(v, "scan_type",  scan_type_serde(scan_type_of(r)));
+    var arr = json_v_arr_new();
+    var findings = scan_findings(r);
+    var n = vec_len(findings);
+    var i = 0;
+    while (i < n) {
+        json_v_arr_push(arr, finding_to_json_v(vec_get(findings, i)));
+        i = i + 1;
+    }
+    _aegis_jv_set(v, "findings", arr);
+    _aegis_jv_set_bool(v, "clean", scan_clean(r));
+    return v;
+}
+
+fn scan_result_to_json(r) { return json_v_build(scan_result_to_json_v(r)); }
+
+fn scan_result_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var ts_cstr = _aegis_jv_get_cstr(v, "scanned_at");
+    var ts = 0;
+    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    var target = _aegis_jv_get_str(v, "target");
+    if (target == 0) { target = str_from(""); }
+    var st_cstr = _aegis_jv_get_cstr(v, "scan_type");
+    var st = ST_MANUAL;
+    if (st_cstr != 0) {
+        var parsed = scan_type_from_serde(st_cstr);
+        if (parsed >= 0) { st = parsed; }
+    }
+    var r = alloc(SCAN_RESULT_SIZE);
+    store64(r + 0,  ts);
+    store64(r + 8,  target);
+    store64(r + 16, st);
+    var findings_vec = vec_new();
+    var fv = json_v_obj_get(v, "findings");
+    if (fv != 0) {
+        if (json_v_is_arr(fv) == 1) {
+            var n = json_v_arr_len(fv);
+            var i = 0;
+            while (i < n) {
+                var f = finding_from_json_v(json_v_arr_get(fv, i));
+                if (f != 0) { vec_push(findings_vec, f); }
+                i = i + 1;
+            }
+        }
+    }
+    store64(r + 24, findings_vec);
+    store64(r + 32, _aegis_jv_get_bool(v, "clean"));
+    return r;
+}
+
+fn scan_result_from_json(json_str) { return scan_result_from_json_v(json_v_parse(json_str)); }
+
+# ---------- AegisConfig -----------------------------------------
+
+fn aegis_config_to_json_v(c) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_bool(v, "scan_on_install",             aegis_config_scan_on_install(c));
+    _aegis_jv_set_bool(v, "scan_on_execute",             aegis_config_scan_on_execute(c));
+    _aegis_jv_set_int(v,  "periodic_scan_interval_secs", aegis_config_periodic_scan_interval_secs(c));
+    _aegis_jv_set_bool(v, "quarantine_on_critical",      aegis_config_quarantine_on_critical(c));
+    _aegis_jv_set_bool(v, "quarantine_on_high",          aegis_config_quarantine_on_high(c));
+    _aegis_jv_set_int(v,  "max_events",                  aegis_config_max_events(c));
+    var ar = aegis_config_auto_release_timeout_secs(c);
+    if (ar == AEGIS_AUTO_RELEASE_NONE) {
+        _aegis_jv_set(v, "auto_release_timeout_secs", json_v_null());
+    } else {
+        _aegis_jv_set_int(v, "auto_release_timeout_secs", ar);
+    }
+    return v;
+}
+
+fn aegis_config_to_json(c) { return json_v_build(aegis_config_to_json_v(c)); }
+
+fn aegis_config_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var c = alloc(AEGIS_CONFIG_SIZE);
+    store64(c + 0,  _aegis_jv_get_bool(v, "scan_on_install"));
+    store64(c + 8,  _aegis_jv_get_bool(v, "scan_on_execute"));
+    store64(c + 16, _aegis_jv_get_int(v,  "periodic_scan_interval_secs"));
+    store64(c + 24, _aegis_jv_get_bool(v, "quarantine_on_critical"));
+    store64(c + 32, _aegis_jv_get_bool(v, "quarantine_on_high"));
+    store64(c + 40, _aegis_jv_get_int(v,  "max_events"));
+    var arv = json_v_obj_get(v, "auto_release_timeout_secs");
+    var ar = AEGIS_AUTO_RELEASE_NONE;
+    if (arv != 0) {
+        if (json_v_is_int(arv) == 1) { ar = json_v_int(arv); }
+    }
+    store64(c + 48, ar);
+    return c;
+}
+
+fn aegis_config_from_json(json_str) { return aegis_config_from_json_v(json_v_parse(json_str)); }
+
+# ---------- DatabaseSecurityPolicy ------------------------------
+
+fn dbpolicy_to_json_v(p) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_str(v,  "postgres_data_dir",         dbpolicy_postgres_data_dir(p));
+    _aegis_jv_set_str(v,  "redis_data_dir",            dbpolicy_redis_data_dir(p));
+    _aegis_jv_set_bool(v, "audit_ddl",                 dbpolicy_audit_ddl(p));
+    _aegis_jv_set_int(v,  "max_connections_per_agent", dbpolicy_max_connections_per_agent(p));
+    _aegis_jv_set_bool(v, "check_socket_permissions",  dbpolicy_check_socket_permissions(p));
+    var arr = json_v_arr_new();
+    var kt = dbpolicy_kernel_tuning(p);
+    var n = vec_len(kt);
+    var i = 0;
+    while (i < n) {
+        json_v_arr_push(arr, ktr_to_json_v(vec_get(kt, i)));
+        i = i + 1;
+    }
+    _aegis_jv_set(v, "kernel_tuning", arr);
+    return v;
+}
+
+fn dbpolicy_to_json(p) { return json_v_build(dbpolicy_to_json_v(p)); }
+
+fn dbpolicy_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var p = alloc(DB_SECURITY_POLICY_SIZE);
+    var pg = _aegis_jv_get_str(v, "postgres_data_dir");
+    var rd = _aegis_jv_get_str(v, "redis_data_dir");
+    if (pg == 0) { pg = str_from(""); }
+    if (rd == 0) { rd = str_from(""); }
+    store64(p + 0,  pg);
+    store64(p + 8,  rd);
+    store64(p + 16, _aegis_jv_get_bool(v, "audit_ddl"));
+    store64(p + 24, _aegis_jv_get_int(v,  "max_connections_per_agent"));
+    store64(p + 32, _aegis_jv_get_bool(v, "check_socket_permissions"));
+    var kt = vec_new();
+    var ktv = json_v_obj_get(v, "kernel_tuning");
+    if (ktv != 0) {
+        if (json_v_is_arr(ktv) == 1) {
+            var n = json_v_arr_len(ktv);
+            var i = 0;
+            while (i < n) {
+                var k = ktr_from_json_v(json_v_arr_get(ktv, i));
+                if (k != 0) { vec_push(kt, k); }
+                i = i + 1;
+            }
+        }
+    }
+    store64(p + 40, kt);
+    return p;
+}
+
+fn dbpolicy_from_json(json_str) { return dbpolicy_from_json_v(json_v_parse(json_str)); }
+
+# ---------- AegisStats ------------------------------------------
+
+fn aegis_stats_to_json_v(s) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_int(v, "total_events",       stats_total_events(s));
+    _aegis_jv_set_int(v, "unresolved_events",  stats_unresolved_events(s));
+    _aegis_jv_set_int(v, "quarantined_agents", stats_quarantined_agents(s));
+    _aegis_jv_set_int(v, "scans_completed",    stats_scans_completed(s));
+    var counts = json_v_obj_new();
+    _aegis_jv_set_int(counts, threat_level_serde(THREAT_CRITICAL), stats_threat_count(s, THREAT_CRITICAL));
+    _aegis_jv_set_int(counts, threat_level_serde(THREAT_HIGH),     stats_threat_count(s, THREAT_HIGH));
+    _aegis_jv_set_int(counts, threat_level_serde(THREAT_MEDIUM),   stats_threat_count(s, THREAT_MEDIUM));
+    _aegis_jv_set_int(counts, threat_level_serde(THREAT_LOW),      stats_threat_count(s, THREAT_LOW));
+    _aegis_jv_set_int(counts, threat_level_serde(THREAT_INFO),     stats_threat_count(s, THREAT_INFO));
+    _aegis_jv_set(v, "threat_counts", counts);
+    return v;
+}
+
+fn aegis_stats_to_json(s) { return json_v_build(aegis_stats_to_json_v(s)); }
+
+fn aegis_stats_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var s = alloc(AEGIS_STATS_SIZE);
+    store64(s + 0,  _aegis_jv_get_int(v, "total_events"));
+    store64(s + 8,  _aegis_jv_get_int(v, "unresolved_events"));
+    store64(s + 16, _aegis_jv_get_int(v, "quarantined_agents"));
+    store64(s + 24, _aegis_jv_get_int(v, "scans_completed"));
+    var i = 0;
+    while (i < 5) {
+        store64(s + 32 + i * 8, 0);
+        i = i + 1;
+    }
+    var tc = json_v_obj_get(v, "threat_counts");
+    if (tc != 0) {
+        if (json_v_is_obj(tc) == 1) {
+            store64(s + 32 + THREAT_CRITICAL * 8, _aegis_jv_get_int(tc, "Critical"));
+            store64(s + 32 + THREAT_HIGH * 8,     _aegis_jv_get_int(tc, "High"));
+            store64(s + 32 + THREAT_MEDIUM * 8,   _aegis_jv_get_int(tc, "Medium"));
+            store64(s + 32 + THREAT_LOW * 8,      _aegis_jv_get_int(tc, "Low"));
+            store64(s + 32 + THREAT_INFO * 8,     _aegis_jv_get_int(tc, "Info"));
+        }
+    }
+    return s;
+}
+
+fn aegis_stats_from_json(json_str) { return aegis_stats_from_json_v(json_v_parse(json_str)); }
+
+# ---------- QuarantineEntry -------------------------------------
+
+fn quarantine_entry_to_json_v(q) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_str(v,  "agent_id",       q_agent_id(q));
+    _aegis_jv_set_str(v,  "reason",         q_reason(q));
+    _aegis_jv_set_cstr(v, "quarantined_at", iso8601(q_quarantined_at(q)));
+    _aegis_jv_set_cstr(v, "threat_level",   threat_level_serde(q_threat_level(q)));
+    var arr = json_v_arr_new();
+    var events = q_events(q);
+    var n = vec_len(events);
+    var i = 0;
+    while (i < n) {
+        json_v_arr_push(arr, json_v_str_new(vec_get(events, i)));
+        i = i + 1;
+    }
+    _aegis_jv_set(v, "events", arr);
+    var ar = q_auto_release_at(q);
+    if (ar == AEGIS_AUTO_RELEASE_NONE) {
+        _aegis_jv_set(v, "auto_release_at", json_v_null());
+    } else {
+        _aegis_jv_set_cstr(v, "auto_release_at", iso8601(ar));
+    }
+    return v;
+}
+
+fn quarantine_entry_to_json(q) { return json_v_build(quarantine_entry_to_json_v(q)); }
+
+fn quarantine_entry_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var entry = alloc(QUARANTINE_ENTRY_SIZE);
+    var aid = _aegis_jv_get_str(v, "agent_id");
+    var reason = _aegis_jv_get_str(v, "reason");
+    if (aid == 0)    { aid = str_from(""); }
+    if (reason == 0) { reason = str_from(""); }
+    store64(entry + 0, aid);
+    store64(entry + 8, reason);
+    var ts_cstr = _aegis_jv_get_cstr(v, "quarantined_at");
+    var ts = 0;
+    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    store64(entry + 16, ts);
+    var tl_cstr = _aegis_jv_get_cstr(v, "threat_level");
+    var tl = THREAT_INFO;
+    if (tl_cstr != 0) {
+        var parsed = threat_level_from_serde(tl_cstr);
+        if (parsed >= 0) { tl = parsed; }
+    }
+    store64(entry + 24, tl);
+    var events_vec = vec_new();
+    var ev = json_v_obj_get(v, "events");
+    if (ev != 0) {
+        if (json_v_is_arr(ev) == 1) {
+            var n = json_v_arr_len(ev);
+            var i = 0;
+            while (i < n) {
+                var item = json_v_arr_get(ev, i);
+                if (item != 0) {
+                    if (json_v_is_str(item) == 1) {
+                        vec_push(events_vec, json_v_str(item));
+                    }
+                }
+                i = i + 1;
+            }
+        }
+    }
+    store64(entry + 32, events_vec);
+    var arv = json_v_obj_get(v, "auto_release_at");
+    var ar = AEGIS_AUTO_RELEASE_NONE;
+    if (arv != 0) {
+        if (json_v_is_str(arv) == 1) { ar = iso8601_parse(json_v_str(arv)); }
+    }
+    store64(entry + 40, ar);
+    return entry;
+}
+
+fn quarantine_entry_from_json(json_str) { return quarantine_entry_from_json_v(json_v_parse(json_str)); }
+
+# ---------- SecurityEvent ---------------------------------------
+
+fn security_event_to_json_v(ev) {
+    var v = json_v_obj_new();
+    _aegis_jv_set_str(v,  "id",           event_id(ev));
+    _aegis_jv_set_cstr(v, "timestamp",    iso8601(event_timestamp(ev)));
+    _aegis_jv_set_cstr(v, "event_type",   event_type_serde(event_kind(ev)));
+    _aegis_jv_set_str(v,  "source",       event_source(ev));
+    var aid = event_agent_id(ev);
+    if (aid == 0) {
+        _aegis_jv_set(v, "agent_id", json_v_null());
+    } else {
+        _aegis_jv_set_str(v, "agent_id", aid);
+    }
+    _aegis_jv_set_cstr(v, "threat_level", threat_level_serde(event_threat_level(ev)));
+    _aegis_jv_set_str(v,  "description",  event_description(ev));
+    var meta_obj = json_v_obj_new();
+    var meta = event_metadata(ev);
+    if (meta != 0) {
+        var keys = map_keys(meta);
+        var n = vec_len(keys);
+        var i = 0;
+        while (i < n) {
+            var k = vec_get(keys, i);
+            var val = map_get(meta, k);
+            json_v_obj_set(meta_obj, str_from(k), json_v_str_new(val));
+            i = i + 1;
+        }
+    }
+    _aegis_jv_set(v, "metadata", meta_obj);
+    _aegis_jv_set_bool(v, "resolved", event_resolved(ev));
+    return v;
+}
+
+fn security_event_to_json(ev) { return json_v_build(security_event_to_json_v(ev)); }
+
+fn security_event_from_json_v(v) {
+    if (v == 0) { return 0; }
+    if (json_v_is_obj(v) == 0) { return 0; }
+    var e = alloc(SECURITY_EVENT_SIZE);
+    var id = _aegis_jv_get_str(v, "id");
+    if (id == 0) { id = str_from(""); }
+    store64(e + 0, id);
+    var ts_cstr = _aegis_jv_get_cstr(v, "timestamp");
+    var ts = 0;
+    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    store64(e + 8, ts);
+    var kind_cstr = _aegis_jv_get_cstr(v, "event_type");
+    var kind = EV_POLICY_VIOLATION;
+    if (kind_cstr != 0) {
+        var parsed = event_type_from_serde(kind_cstr);
+        if (parsed >= 0) { kind = parsed; }
+    }
+    store64(e + 16, kind);
+    var src = _aegis_jv_get_str(v, "source");
+    if (src == 0) { src = str_from(""); }
+    store64(e + 24, src);
+    var aid_v = json_v_obj_get(v, "agent_id");
+    var aid = 0;
+    if (aid_v != 0) {
+        if (json_v_is_str(aid_v) == 1) { aid = json_v_str(aid_v); }
+    }
+    store64(e + 32, aid);
+    var tl_cstr = _aegis_jv_get_cstr(v, "threat_level");
+    var tl = THREAT_INFO;
+    if (tl_cstr != 0) {
+        var parsed = threat_level_from_serde(tl_cstr);
+        if (parsed >= 0) { tl = parsed; }
+    }
+    store64(e + 40, tl);
+    var desc = _aegis_jv_get_str(v, "description");
+    if (desc == 0) { desc = str_from(""); }
+    store64(e + 48, desc);
+    var meta = 0;
+    var meta_v = json_v_obj_get(v, "metadata");
+    if (meta_v != 0) {
+        if (json_v_is_obj(meta_v) == 1) {
+            var n = json_v_obj_len(meta_v);
+            if (n > 0) {
+                meta = map_new();
+                var i = 0;
+                while (i < n) {
+                    var k = json_v_obj_key(meta_v, i);
+                    var item = json_v_obj_val(meta_v, i);
+                    if (json_v_is_str(item) == 1) {
+                        map_set(meta, str_data(k), json_v_str(item));
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    store64(e + 56, meta);
+    store64(e + 64, _aegis_jv_get_bool(v, "resolved"));
+    return e;
+}
+
+fn security_event_from_json(json_str) { return security_event_from_json_v(json_v_parse(json_str)); }
