@@ -14,14 +14,15 @@ Aegis is the central security-policy daemon for AGNOS. It records security event
 | Scan findings | Path traversal in scan target description | Targets are formatted as `agent:<id>` / `package:<path>`; no path is dereferenced through user input beyond `file_exists` + `sys_stat`. Findings are surfaced as data, not actioned. |
 | World-writable / world-accessible checks | Wrong mask, false negatives | `mode & 0o002` for world-writable, `mode & 0o007` for any-other-bit on database directories. Matches `rust-old`. |
 | Database access violation | Unauthorized cross-tenant DB access slips through | `aegis_report_database_access_violation` raises a `THREAT_HIGH` event; default config quarantines High → `QA_SUSPEND`. |
-| Counter-backed event IDs (0.5.0) | Predictable IDs | IDs are `ev-1`, `ev-2`, ... — not collision-resistant or unguessable. Acceptable for in-process correlation; for cross-process / wire formats, **wait for the agnostik UUID swap** (post-release). |
+| Event IDs | Predictable / replayable IDs | RFC 4122 v4 UUIDs via agnostik's `agent_id_new` (kernel `getrandom` + `/dev/urandom` fallback). Audit-reviewed (agnostik F-001, 2026-04-26 — deterministic-fallback removed). |
 | In-process metadata maps | Hostile cstr keys outliving their backing buffer | Map values are `Str*` (heap-stable). Keys are cstrs that callers are expected to keep alive (string literals are static; dynamic keys must be kept by the caller until the map is dropped). |
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.5.x | Yes |
+| 0.6.x | Yes |
+| 0.5.x | Yes (current → previous) |
 | < 0.5 | No (pre-port Rust scaffold) |
 
 ## Reporting a Vulnerability
@@ -38,5 +39,5 @@ We will acknowledge within 72 hours and aim to ship a fix within 14 days for Hig
 
 ## Out of Scope
 
-- Network enforcement (firewall integration via `nein`) — not yet in cyrius. The `rust-old/src/firewall.rs` reference is the spec for that work; the cyrius port lands when nein modernises its language pin.
+- Network enforcement (firewall integration via `nein`) — not yet in cyrius. The frozen rust spec at `docs/reference/firewall.rs.ref` is the parity oracle for that work; the cyrius port lands when nein modernises its language pin.
 - Cryptographic primitives — aegis enforces policy, **not** cryptography. All crypto belongs in [sigil](https://github.com/MacCracken/sigil).

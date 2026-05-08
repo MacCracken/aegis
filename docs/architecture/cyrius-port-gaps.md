@@ -13,7 +13,7 @@
 | `chrono` (DateTime/Duration/Utc) | `lib/chrono.cyr` — `clock_epoch_secs`, `iso8601(epoch)`, `iso8601_now`, `dur_new(secs, nsecs)`, `sleep_ms` | covered |
 | `serde` + `serde_json` | `lib/json.cyr` — `json_parse`, `json_get`, `json_build`. **No derive.** | partial — every record needs hand-rolled `*_to_json` / `*_from_json` |
 | `tracing` (`info!`/`warn!`/`debug!` + spans) | `lib/sakshi.cyr` (full v2.2.3 bundle — used directly, **not** via `lib/log.cyr`) | covered. Levels (`sakshi_trace`/`debug`/`info`/`warn`/`error`/`fatal`), spans (`sakshi_span_enter`/`exit`/`depth`), trace IDs (`sakshi_trace_set`/`trace_id`), output routing (`sakshi_output_file`/`output_udp`/`set_output_fd`), ring buffer (`sakshi_ring_*`), emit hook (`sakshi_set_emit_hook`). Structured key=value composition is hand-built via `str_builder_*` — sakshi takes one `(msg, len)` per record, so we format `"event_id=… threat=… kind=…"` ourselves. |
-| `uuid` (`Uuid::new_v4`) | **agnostik** v1.0.0 `src/types.cyr` — `agent_id_new()` returns a 16-byte v4 UUID buffer (getrandom + `/dev/urandom` fallback, version/variant nibbles set, audit-reviewed Apr 2026). Add `[deps.agnostik]`. | covered. Need a 16-byte → 36-char hex formatter for the string form (`event.id` is `String` in Rust) — ~15 LOC, not the 30 I previously estimated. |
+| `uuid` (`Uuid::new_v4`) | **agnostik** v1.0.0 `src/types.cyr` — `agent_id_new()` returns a 16-byte v4 UUID buffer (getrandom + `/dev/urandom` fallback, version/variant nibbles set, audit-reviewed Apr 2026). | **done in 0.6.0**. `[deps.agnostik]` declared in `cyrius.cyml`; `aegis_next_id` calls `agent_id_new()` and renders via the local `_aegis_uuid_to_string(buf16)` helper (heap-allocated 37-byte buffer per call, 8-4-4-4-12 hyphenated lowercase hex). |
 | `nein` (firewall feature) | `~/Repos/nein` cyrius port v1.0.0 — pinned to **cyrius 4.5.0**, ~5 minor versions stale | **deferred.** Wait until nein bumps to a modern cyrius pin before porting `rust-old/src/firewall.rs`. Until then: `firewall.rs` stays in `rust-old/` as the spec, no cyrius equivalent shipped, no `[deps.nein]` in the manifest, no firewall module in `src/`. The aegis daemon ships without quarantine-via-firewall enforcement until that lands. |
 | `tempfile` (dev-dep) | none | gap — tests use a manual `/tmp/aegis_test_<pid>_<n>` scratch helper |
 
@@ -52,7 +52,7 @@
 
 | Item | Lines | Notes |
 |------|-------|-------|
-| `uuid_to_string(buf16) → Str` | ~15 | format agnostik's 16-byte UUID buffer as 36-char hyphenated hex; `event.id` is a `String` in Rust |
+| ~~`uuid_to_string(buf16) → Str`~~ | done | `_aegis_uuid_to_string` shipped in 0.6.0. |
 | `vec_drain_front(v, n)` or ring buffer | ~40 | for `prune_events` correctness at 10k cap |
 | `tmp_dir_new()` / `tmp_dir_drop(path)` | ~25 | tests/scaffolding |
 | `stat_mode(path) → mode_or_-1` | ~15 | sys_stat wrapper |

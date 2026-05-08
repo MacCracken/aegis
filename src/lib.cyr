@@ -63,17 +63,37 @@ fn event_type_label(k) {
 }
 
 # ================================================================
-# Event ID generator — counter-backed for the first slice.
-# Swap to agnostik agent_id_new() once that dep lands.
+# Event ID generator — RFC 4122 v4 UUIDs via agnostik (audit-
+# reviewed getrandom + /dev/urandom fallback). Renders the 16-byte
+# UUID buffer as a 36-char hyphenated lowercase hex string.
 # ================================================================
-var _aegis_id_counter = 0;
+fn _aegis_hex_nibble(n) {
+    if (n < 10) { return 48 + n; }   # '0'..'9'
+    return 87 + n;                    # 'a'..'f'  (97 - 10)
+}
+
+# 8-4-4-4-12 layout — dashes after byte indices 4, 6, 8, 10.
+fn _aegis_uuid_to_string(uuid_buf) {
+    var hex = alloc(37);              # 36 chars + NUL
+    var i = 0;
+    var pos = 0;
+    while (i < 16) {
+        if (i == 4) { store8(hex + pos, 45); pos = pos + 1; }
+        elif (i == 6) { store8(hex + pos, 45); pos = pos + 1; }
+        elif (i == 8) { store8(hex + pos, 45); pos = pos + 1; }
+        elif (i == 10) { store8(hex + pos, 45); pos = pos + 1; }
+        var byte_val = load8(uuid_buf + i);
+        store8(hex + pos,     _aegis_hex_nibble((byte_val >> 4) & 15));
+        store8(hex + pos + 1, _aegis_hex_nibble(byte_val & 15));
+        pos = pos + 2;
+        i = i + 1;
+    }
+    store8(hex + pos, 0);
+    return str_from(hex);
+}
 
 fn aegis_next_id() {
-    _aegis_id_counter = _aegis_id_counter + 1;
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "ev-");
-    str_builder_add_int(sb, _aegis_id_counter);
-    return str_builder_build(sb);
+    return _aegis_uuid_to_string(agent_id_new());
 }
 
 # ================================================================

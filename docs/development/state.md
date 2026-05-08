@@ -5,7 +5,7 @@
 
 ## Version
 
-**0.5.0** — first cyrius release (2026-05-08). Surface parity with the prior Rust scaffold (`rust-old/src/lib.rs`, 1893 lines) reached. `cyrius.cyml` `version` is sourced from `VERSION` via `${file:VERSION}`.
+**0.6.0** — first post-parity release (2026-05-08). Cleanup + real UUIDs. `rust-old/` was removed; `firewall.rs` relocated to `docs/reference/firewall.rs.ref` as the spec for the (deferred) nein integration. Event IDs are now RFC 4122 v4 UUIDs via agnostik's `agent_id_new`.
 
 ## Toolchain
 
@@ -15,15 +15,20 @@
 
 ## Source
 
-- Rust reference: 1893 lines at `rust-old/` (frozen, do not edit).
-- Cyrius port (slices 1–5 complete, 2026-05-08): **full surface parity with `rust-old/src/lib.rs`** — all 13 public types and 22 daemon methods.
+- Rust reference: removed in 0.6.0. Only `firewall.rs` survives at `docs/reference/firewall.rs.ref` (frozen spec for the deferred nein integration).
+- Cyrius port (slices 1–5 complete, 2026-05-08): **full surface parity** with the prior `rust-old/src/lib.rs` (1893 lines) — all 13 public types and 22 daemon methods.
   - Enums: `ThreatLevel`, `SecurityEventType`, `QuarantineAction` (`QA_NONE = 0` so `report_event` returns action-or-zero), `ScanType`. All have label fns.
   - Records: 72-byte `SecurityEvent` (with lazy-init `metadata` cstr-keyed map), 56-byte `AegisConfig` (`-1` sentinel for `auto_release_timeout_secs = None`), 48-byte `QuarantineEntry`, 32-byte `SecurityFinding`, 40-byte `SecurityScanResult`, 24-byte `KernelTuningRecommendation`, 48-byte `DatabaseSecurityPolicy`, 72-byte `AegisStats`, 72-byte `AegisSecurityDaemon` (config + events vec + lazy-init quarantine map + lazy-init scan-history vec + inline 5-slot threat-counts array).
-  - Helpers: counter-backed `aegis_next_id`; `_aegis_stat_modesize(path, out16)` wraps `sys_stat` (`STAT_MODE` + `STAT_SIZE`); `event_metadata_set` / `event_metadata_get` lazy-init the metadata map; `_aegis_prune_events` rebuilds the events vec with the kept suffix to avoid O(n²) `vec_remove(0)`.
+  - Helpers: `aegis_next_id` calls agnostik's `agent_id_new()` (RFC 4122 v4) and stringifies via local `_aegis_uuid_to_string(buf16)`; `_aegis_stat_modesize(path, out16)` wraps `sys_stat` (`STAT_MODE` + `STAT_SIZE`); `event_metadata_set` / `event_metadata_get` lazy-init the metadata map; `_aegis_prune_events` rebuilds the events vec with the kept suffix to avoid O(n²) `vec_remove(0)` (still O(n) per push at cap — ring buffer is the planned fix in 0.8.x).
   - Daemon API (cstrs for `agent_id` / `event_id` / path parameters): `aegis_new`, `aegis_report_event` (records + auto-quarantine; returns `QuarantineAction`), `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`, `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`, `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`, `aegis_scan_agent`, `aegis_scan_package`, `aegis_stats`, `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`, `aegis_database_kernel_recommendations`.
   - `src/main.cyr` — thin entry that includes `src/lib.cyr`.
-- **rust-old can be removed** once the user signs off. `firewall.rs` is the only outstanding rust file (deferred until nein modernises its `cyrius = "4.5.0"` pin — see `docs/architecture/cyrius-port-gaps.md`); the rest of `rust-old/src/lib.rs` is fully reproduced.
-- Still deferred (post-parity polish): JSON serde (hand-rolled per-record), sakshi-full structured logging (spans + trace IDs), agnostik UUIDs (replace counter-backed `aegis_next_id`), nein firewall integration. All scoped in `docs/architecture/cyrius-port-gaps.md`.
+- Still deferred (post-parity polish):
+  - **0.7.0** — sakshi-full structured logging (spans + trace IDs + logfmt key=value).
+  - **0.8.0** — JSON serde (hand-rolled `*_to_json` / `*_from_json` per record).
+  - **0.8.x** — ring-buffer for events (kills the O(n) prune-and-rebuild perf hit), real fuzz targets, ADRs for load-bearing decisions, `bench-history.csv` baseline, `scripts/audit.sh`.
+  - **0.9.0** — V1 prep: API-surface snapshot, full audit, doc polish.
+  - **1.0.0** — first stable. API freeze. Firewall stays out per user call (lands in 1.x once nein modernises its `cyrius = "4.5.0"` pin).
+  - All scoped in `docs/architecture/cyrius-port-gaps.md`.
 
 ## Tests
 
@@ -75,7 +80,8 @@ Bench / fuzz harnesses (`tests/aegis.bcyr`, `tests/aegis.fcyr`) remain stubs.
 
 Direct (declared in `cyrius.cyml`):
 
-- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap
+- stdlib — string, fmt, alloc, vec, str, syscalls, io, args, assert, tagged, chrono, hashmap, bench, fnptr
+- agnostik (v1.0.0) — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`)
 
 ## Consumers
 

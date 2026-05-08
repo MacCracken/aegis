@@ -12,3 +12,9 @@ output = "aegis"
 
 [deps]
 stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr"]
+
+[deps.agnostik]
+git = "https://github.com/MacCracken/agnostik.git"
+path = "../agnostik"
+tag = "1.0.0"
+modules = ["src/types.cyr"]

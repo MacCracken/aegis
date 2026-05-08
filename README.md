@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.5.0** — full surface parity with the prior Rust scaffold (`rust-old/src/lib.rs`, 1893 lines). Cyrius port. 13 public records / enums and 22 daemon entry points reproduced and covered by 53 test groups (155 assertions). Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release.
+**0.6.0** — first post-parity release. 13 public records / enums and 22 daemon entry points covered by 53 test groups (155 assertions). Event IDs are real RFC 4122 v4 UUIDs via [agnostik](https://github.com/MacCracken/agnostik)'s `agent_id_new`. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
 
 ## Quick Start
 
@@ -67,7 +67,7 @@ docs/
   development/   — state.md (live), roadmap.md
   adr/           — Architectural Decision Records
   guides/        — task-oriented how-tos
-rust-old/        — frozen Rust reference (parity oracle; will be removed post-0.5.0)
+  reference/     — frozen reference material (firewall.rs.ref — pending nein modernisation)
 ```
 
 ## Documentation

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-08
+
+**Cleanup + real UUIDs.** First post-parity slice. Cyrius pin: `5.10.0`.
+
+### Added
+
+- `[deps.agnostik]` (v1.0.0) — pulls `src/types.cyr` for the audit-reviewed `agent_id_new()` (RFC 4122 v4 over `getrandom` with `/dev/urandom` fallback).
+- `_aegis_uuid_to_string(buf16)` — renders agnostik's 16-byte v4 UUID as a 36-char hyphenated lowercase hex string. Heap-allocated per call (no static-buffer aliasing across consecutive ids).
+
+### Changed
+
+- **Event IDs are real v4 UUIDs.** `aegis_next_id()` now produces `550e8400-e29b-41d4-a716-446655440000`-shaped strings instead of the placeholder `ev-1` / `ev-2` counter. Wire-format ready; collision-resistant.
+- Removed the `_aegis_id_counter` global.
+
+### Removed
+
+- `rust-old/` is gone. `firewall.rs` was relocated to `docs/reference/firewall.rs.ref` as the spec for the (still-deferred) nein integration; the rest of the rust scaffolding (Cargo.lock, Cargo.toml, codecov.yml, deny.toml, rust-toolchain.toml, src/lib.rs, LINES_OF_RUST.txt) was deleted.
+
+### Notes
+
+- Bench impact: `aegis_next_id` ≈ 2 µs avg (was ≈ 1 µs with the counter). Extra microsecond is the `getrandom` syscall + hex formatting — within noise, not worth caching.
+- aarch64 cross-build: agnostik's `_fill_random` hardcodes the x86_64 `getrandom` syscall number (318). On aarch64 it would be 278. CI's aarch64 cross-build is best-effort; expect a runtime path issue if the cross-build succeeds and is exercised. Will be addressed when agnostik gains arch dispatch.
+
 ## [0.5.0] — 2026-05-08
 
 **Initial Cyrius release.** Full surface parity with the prior Rust scaffold (`rust-old/src/lib.rs`, 1893 lines). Cyrius pin: `5.10.0`.
