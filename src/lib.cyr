@@ -90,13 +90,19 @@ fn aegis_next_id() {
 # ================================================================
 var SECURITY_EVENT_SIZE = 72;
 
-fn security_event_new(event_type, source_cstr, agent_id_str, threat_level, description_cstr) {
+# `agent_id_cstr` may be 0 to mean None (Option::None). Otherwise
+# it's a null-terminated cstr that gets wrapped in a Str* for storage.
+fn security_event_new(event_type, source_cstr, agent_id_cstr, threat_level, description_cstr) {
     var e = alloc(SECURITY_EVENT_SIZE);
+    var aid_stored = 0;
+    if (agent_id_cstr != 0) {
+        aid_stored = str_from(agent_id_cstr);
+    }
     store64(e + 0,  aegis_next_id());
     store64(e + 8,  clock_epoch_secs());
     store64(e + 16, event_type);
     store64(e + 24, str_from(source_cstr));
-    store64(e + 32, agent_id_str);
+    store64(e + 32, aid_stored);
     store64(e + 40, threat_level);
     store64(e + 48, str_from(description_cstr));
     store64(e + 56, 0);
@@ -217,13 +223,44 @@ fn _aegis_prune_events(d) {
     return 0;
 }
 
-# Record a security event. Returns 0 — auto-quarantine logic lands
-# in the quarantine slice and will return a QuarantineAction there.
+# Record a security event. Returns a QuarantineAction (QA_NONE if
+# the event did not trigger an auto-quarantine).
 fn aegis_report_event(d, ev) {
-    _aegis_inc_threat_count(d, event_threat_level(ev));
+    var threat = event_threat_level(ev);
+    _aegis_inc_threat_count(d, threat);
     vec_push(aegis_events(d), ev);
     _aegis_prune_events(d);
-    return 0;
+
+    var config = aegis_config(d);
+    var should_q = 0;
+    if (threat == THREAT_CRITICAL) {
+        if (aegis_config_quarantine_on_critical(config) == 1) { should_q = 1; }
+    }
+    if (threat == THREAT_HIGH) {
+        if (aegis_config_quarantine_on_high(config) == 1) { should_q = 1; }
+    }
+    if (should_q == 0) { return QA_NONE; }
+
+    var aid_str = event_agent_id(ev);
+    if (aid_str == 0) { return QA_NONE; }
+
+    var aid_cstr = str_data(aid_str);
+    var qmap = _aegis_ensure_quarantine_map(d);
+
+    if (map_has(qmap, aid_cstr) == 1) {
+        var existing = map_get(qmap, aid_cstr);
+        vec_push(q_events(existing), event_id(ev));
+        if (threat < q_threat_level(existing)) {
+            q_set_threat_level(existing, threat);
+        }
+    } else {
+        var entry = _aegis_make_quarantine_entry(d, aid_cstr, str_data(event_description(ev)), threat, event_id(ev));
+        map_set(qmap, aid_cstr, entry);
+    }
+
+    if (threat == THREAT_CRITICAL) { return QA_TERMINATE; }
+    if (threat == THREAT_HIGH)     { return QA_SUSPEND; }
+    return QA_ISOLATE;
 }
 
 fn aegis_total_events(d) { return vec_len(aegis_events(d)); }
@@ -257,18 +294,18 @@ fn aegis_recent_events(d, count) {
     return out;
 }
 
-# Filter events by agent_id (Str*). Events whose agent_id is 0
+# Filter events by agent_id (cstr). Events whose agent_id is 0
 # (None) never match.
-fn aegis_events_for_agent(d, agent_id_str) {
+fn aegis_events_for_agent(d, agent_id_cstr) {
     var out = vec_new();
     var events = aegis_events(d);
     var n = vec_len(events);
     var i = 0;
     while (i < n) {
         var e = vec_get(events, i);
-        var aid = event_agent_id(e);
-        if (aid != 0) {
-            if (str_eq(aid, agent_id_str) == 1) {
+        var aid_str = event_agent_id(e);
+        if (aid_str != 0) {
+            if (streq(str_data(aid_str), agent_id_cstr) == 1) {
                 vec_push(out, e);
             }
         }
@@ -307,18 +344,174 @@ fn aegis_unresolved_events(d) {
     return out;
 }
 
-# Mark an event resolved by id. Returns 1 if found, 0 otherwise.
-fn aegis_resolve_event(d, event_id_str) {
+# Mark an event resolved by id (cstr). Returns 1 if found, 0 otherwise.
+fn aegis_resolve_event(d, event_id_cstr) {
     var events = aegis_events(d);
     var n = vec_len(events);
     var i = 0;
     while (i < n) {
         var e = vec_get(events, i);
-        if (str_eq(event_id(e), event_id_str) == 1) {
+        if (streq(str_data(event_id(e)), event_id_cstr) == 1) {
             event_set_resolved(e, 1);
             return 1;
         }
         i = i + 1;
     }
     return 0;
+}
+
+# ================================================================
+# QuarantineAction — sentinel 0 means "no action" so report_event
+# can return action-or-zero without tagged Option overhead.
+# ================================================================
+enum QuarantineAction {
+    QA_NONE      = 0;
+    QA_SUSPEND   = 1;
+    QA_TERMINATE = 2;
+    QA_ISOLATE   = 3;
+    QA_RATELIMIT = 4;
+}
+
+fn quarantine_action_label(a) {
+    if (a == QA_NONE)      { return "none"; }
+    if (a == QA_SUSPEND)   { return "suspend"; }
+    if (a == QA_TERMINATE) { return "terminate"; }
+    if (a == QA_ISOLATE)   { return "isolate"; }
+    if (a == QA_RATELIMIT) { return "rate_limit"; }
+    return "unknown";
+}
+
+# ================================================================
+# QuarantineEntry — 48-byte record:
+#   agent_id        @ 0   Str*
+#   reason          @ 8   Str*
+#   quarantined_at  @ 16  i64 epoch s
+#   threat_level    @ 24  ThreatLevel (i64)
+#   events          @ 32  vec* of Str* (event ids that led to / linked to this quarantine)
+#   auto_release_at @ 40  i64 epoch s; AEGIS_AUTO_RELEASE_NONE means no auto-release
+# ================================================================
+var QUARANTINE_ENTRY_SIZE = 48;
+
+fn _aegis_make_quarantine_entry(d, agent_id_cstr, reason_cstr, threat_level, event_id_str) {
+    var entry = alloc(QUARANTINE_ENTRY_SIZE);
+    store64(entry + 0,  str_from(agent_id_cstr));
+    store64(entry + 8,  str_from(reason_cstr));
+    store64(entry + 16, clock_epoch_secs());
+    store64(entry + 24, threat_level);
+    var events = vec_new();
+    if (event_id_str != 0) {
+        vec_push(events, event_id_str);
+    }
+    store64(entry + 32, events);
+    var timeout = aegis_config_auto_release_timeout_secs(aegis_config(d));
+    var ar_at = AEGIS_AUTO_RELEASE_NONE;
+    if (timeout != AEGIS_AUTO_RELEASE_NONE) {
+        ar_at = clock_epoch_secs() + timeout;
+    }
+    store64(entry + 40, ar_at);
+    return entry;
+}
+
+fn q_agent_id(q)        { return load64(q + 0); }
+fn q_reason(q)          { return load64(q + 8); }
+fn q_quarantined_at(q)  { return load64(q + 16); }
+fn q_threat_level(q)    { return load64(q + 24); }
+fn q_events(q)          { return load64(q + 32); }
+fn q_auto_release_at(q) { return load64(q + 40); }
+
+fn q_set_threat_level(q, v)    { store64(q + 24, v); return 0; }
+fn q_set_reason(q, str_ptr)    { store64(q + 8,  str_ptr); return 0; }
+fn q_set_auto_release_at(q, v) { store64(q + 40, v); return 0; }
+
+# ================================================================
+# Daemon quarantine API. All agent_id parameters are cstrs.
+# ================================================================
+
+fn _aegis_ensure_quarantine_map(d) {
+    if (aegis_quarantine(d) == 0) {
+        store64(d + 16, map_new());
+    }
+    return aegis_quarantine(d);
+}
+
+# Manual quarantine. If already quarantined: escalates threat if
+# more severe, appends "; reason" to existing reason. Returns the
+# entry pointer.
+fn aegis_quarantine_agent(d, agent_id_cstr, reason_cstr, threat_level) {
+    var qmap = _aegis_ensure_quarantine_map(d);
+    if (map_has(qmap, agent_id_cstr) == 1) {
+        var existing = map_get(qmap, agent_id_cstr);
+        if (threat_level < q_threat_level(existing)) {
+            q_set_threat_level(existing, threat_level);
+        }
+        var sb = str_builder_new();
+        str_builder_add(sb, q_reason(existing));
+        str_builder_add_cstr(sb, "; ");
+        str_builder_add_cstr(sb, reason_cstr);
+        q_set_reason(existing, str_builder_build(sb));
+        return existing;
+    }
+    var entry = _aegis_make_quarantine_entry(d, agent_id_cstr, reason_cstr, threat_level, 0);
+    map_set(qmap, agent_id_cstr, entry);
+    return entry;
+}
+
+fn aegis_release_agent(d, agent_id_cstr) {
+    if (aegis_quarantine(d) == 0) { return 0; }
+    return map_delete(aegis_quarantine(d), agent_id_cstr);
+}
+
+fn aegis_is_quarantined(d, agent_id_cstr) {
+    if (aegis_quarantine(d) == 0) { return 0; }
+    return map_has(aegis_quarantine(d), agent_id_cstr);
+}
+
+fn aegis_get_quarantine(d, agent_id_cstr) {
+    if (aegis_quarantine(d) == 0) { return 0; }
+    if (map_has(aegis_quarantine(d), agent_id_cstr) == 0) { return 0; }
+    return map_get(aegis_quarantine(d), agent_id_cstr);
+}
+
+fn aegis_quarantined_agents(d) {
+    var out = vec_new();
+    if (aegis_quarantine(d) == 0) { return out; }
+    var qmap = aegis_quarantine(d);
+    var keys = map_keys(qmap);
+    var n = vec_len(keys);
+    var i = 0;
+    while (i < n) {
+        vec_push(out, map_get(qmap, vec_get(keys, i)));
+        i = i + 1;
+    }
+    return out;
+}
+
+# Release agents whose auto_release_at is in the past. Returns a
+# vec of released agent_id keys (cstr ptrs).
+fn aegis_check_auto_releases(d) {
+    var released = vec_new();
+    if (aegis_quarantine(d) == 0) { return released; }
+    var qmap = aegis_quarantine(d);
+    var now = clock_epoch_secs();
+    var keys = map_keys(qmap);
+    var n = vec_len(keys);
+    var i = 0;
+    while (i < n) {
+        var k = vec_get(keys, i);
+        var entry = map_get(qmap, k);
+        var ar_at = q_auto_release_at(entry);
+        if (ar_at != AEGIS_AUTO_RELEASE_NONE) {
+            if (now >= ar_at) {
+                vec_push(released, k);
+            }
+        }
+        i = i + 1;
+    }
+    var m = vec_len(released);
+    var j = 0;
+    while (j < m) {
+        map_delete(qmap, vec_get(released, j));
+        j = j + 1;
+    }
+    return released;
 }

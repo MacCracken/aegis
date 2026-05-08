@@ -132,14 +132,12 @@ fn test_aegis_recent_events() {
 fn test_aegis_events_for_agent() {
     test_group("aegis_events_for_agent");
     var d = aegis_new(aegis_config_default());
-    var alice = str_from("alice");
-    var bob   = str_from("bob");
-    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", alice, THREAT_LOW,  "a1"));
-    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", bob,   THREAT_LOW,  "b1"));
-    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", alice, THREAT_INFO, "a2"));
-    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0,     THREAT_INFO, "x")); # None agent
-    assert_eq(vec_len(aegis_events_for_agent(d, alice)), 2, "alice has 2 events");
-    assert_eq(vec_len(aegis_events_for_agent(d, bob)),   1, "bob has 1 event");
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", "alice", THREAT_LOW,  "a1"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", "bob",   THREAT_LOW,  "b1"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", "alice", THREAT_INFO, "a2"));
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0,       THREAT_INFO, "x")); # None agent
+    assert_eq(vec_len(aegis_events_for_agent(d, "alice")), 2, "alice has 2 events");
+    assert_eq(vec_len(aegis_events_for_agent(d, "bob")),   1, "bob has 1 event");
     return 0;
 }
 
@@ -161,11 +159,11 @@ fn test_aegis_unresolved_events_and_resolve() {
     var e1 = security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_LOW, "a");
     aegis_report_event(d, e1);
     aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "t", 0, THREAT_INFO, "b"));
-    assert_eq(aegis_unresolved_count(d),               2, "2 unresolved before");
-    assert_eq(vec_len(aegis_unresolved_events(d)),     2, "2 unresolved listed");
-    assert_eq(aegis_resolve_event(d, event_id(e1)),    1, "resolve_event returns 1 on hit");
-    assert_eq(aegis_resolve_event(d, str_from("nope")), 0, "resolve_event returns 0 on miss");
-    assert_eq(aegis_unresolved_count(d),               1, "1 unresolved after");
+    assert_eq(aegis_unresolved_count(d),                            2, "2 unresolved before");
+    assert_eq(vec_len(aegis_unresolved_events(d)),                  2, "2 unresolved listed");
+    assert_eq(aegis_resolve_event(d, str_data(event_id(e1))),       1, "resolve_event returns 1 on hit");
+    assert_eq(aegis_resolve_event(d, "nope"),                       0, "resolve_event returns 0 on miss");
+    assert_eq(aegis_unresolved_count(d),                            1, "1 unresolved after");
     return 0;
 }
 
@@ -180,6 +178,171 @@ fn test_aegis_max_events_prunes_oldest() {
         i = i + 1;
     }
     assert_eq(aegis_total_events(d), 5, "events capped at max_events");
+    return 0;
+}
+
+fn test_quarantine_action_labels() {
+    test_group("quarantine_action_labels");
+    assert_streq(quarantine_action_label(QA_NONE),      "none",       "QA_NONE label");
+    assert_streq(quarantine_action_label(QA_SUSPEND),   "suspend",    "QA_SUSPEND label");
+    assert_streq(quarantine_action_label(QA_TERMINATE), "terminate",  "QA_TERMINATE label");
+    assert_streq(quarantine_action_label(QA_ISOLATE),   "isolate",    "QA_ISOLATE label");
+    assert_streq(quarantine_action_label(QA_RATELIMIT), "rate_limit", "QA_RATELIMIT label");
+    return 0;
+}
+
+fn test_quarantine_and_release() {
+    test_group("quarantine_and_release");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "agent-a", "test", THREAT_HIGH);
+    assert_eq(aegis_is_quarantined(d, "agent-a"), 1, "is_quarantined=1 after quarantine");
+    assert_eq(aegis_release_agent(d, "agent-a"),  1, "release returns 1 on hit");
+    assert_eq(aegis_is_quarantined(d, "agent-a"), 0, "is_quarantined=0 after release");
+    return 0;
+}
+
+fn test_release_non_quarantined() {
+    test_group("release_non_quarantined");
+    var d = aegis_new(aegis_config_default());
+    assert_eq(aegis_release_agent(d, "nope"), 0, "release on empty map returns 0");
+    aegis_quarantine_agent(d, "alice", "x", THREAT_HIGH);
+    assert_eq(aegis_release_agent(d, "nope"), 0, "release of nonexistent returns 0");
+    return 0;
+}
+
+fn test_get_quarantine_entry() {
+    test_group("get_quarantine_entry");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "agent-b", "suspicious", THREAT_MEDIUM);
+    var e = aegis_get_quarantine(d, "agent-b");
+    assert_neq(e,                    0,             "entry is non-null");
+    assert_eq(q_threat_level(e),     THREAT_MEDIUM, "threat_level Medium");
+    assert_streq(str_data(q_reason(e)),   "suspicious", "reason round-trip");
+    assert_streq(str_data(q_agent_id(e)), "agent-b",    "agent_id round-trip");
+    return 0;
+}
+
+fn test_quarantined_agents_list() {
+    test_group("quarantined_agents_list");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "a1", "r1", THREAT_HIGH);
+    aegis_quarantine_agent(d, "a2", "r2", THREAT_CRITICAL);
+    assert_eq(vec_len(aegis_quarantined_agents(d)), 2, "two quarantined");
+    return 0;
+}
+
+fn test_quarantine_no_downgrade() {
+    test_group("quarantine_no_downgrade");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "a1", "critical issue", THREAT_CRITICAL);
+    var e = aegis_quarantine_agent(d, "a1", "lesser", THREAT_MEDIUM);
+    assert_eq(q_threat_level(e), THREAT_CRITICAL, "stays Critical on lesser re-quarantine");
+    return 0;
+}
+
+fn test_quarantine_escalates_and_appends_reason() {
+    test_group("quarantine_escalates_and_appends_reason");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "a1", "first reason", THREAT_HIGH);
+    var e = aegis_quarantine_agent(d, "a1", "second reason", THREAT_CRITICAL);
+    assert_eq(q_threat_level(e), THREAT_CRITICAL, "escalates to Critical");
+    var r = str_data(q_reason(e));
+    assert_streq(r, "first reason; second reason", "reasons appended with separator");
+    return 0;
+}
+
+fn test_auto_quarantine_on_critical() {
+    test_group("auto_quarantine_on_critical");
+    var d = aegis_new(aegis_config_default());
+    var ev = security_event_new(EV_SANDBOX_ESCAPE, "test", "agent-1", THREAT_CRITICAL, "boom");
+    var action = aegis_report_event(d, ev);
+    assert_eq(action,                              QA_TERMINATE, "Critical → Terminate");
+    assert_eq(aegis_is_quarantined(d, "agent-1"), 1,            "agent-1 quarantined");
+    return 0;
+}
+
+fn test_auto_quarantine_on_high() {
+    test_group("auto_quarantine_on_high");
+    var d = aegis_new(aegis_config_default());
+    var ev = security_event_new(EV_UNAUTHORIZED_ACCESS, "test", "agent-2", THREAT_HIGH, "x");
+    var action = aegis_report_event(d, ev);
+    assert_eq(action,                              QA_SUSPEND, "High → Suspend");
+    assert_eq(aegis_is_quarantined(d, "agent-2"), 1,          "agent-2 quarantined");
+    return 0;
+}
+
+fn test_no_quarantine_on_medium() {
+    test_group("no_quarantine_on_medium");
+    var d = aegis_new(aegis_config_default());
+    var ev = security_event_new(EV_ANOMALOUS_BEHAVIOR, "test", "agent-3", THREAT_MEDIUM, "x");
+    var action = aegis_report_event(d, ev);
+    assert_eq(action,                              QA_NONE, "Medium → None");
+    assert_eq(aegis_is_quarantined(d, "agent-3"), 0,       "agent-3 not quarantined");
+    return 0;
+}
+
+fn test_no_quarantine_without_agent_id() {
+    test_group("no_quarantine_without_agent_id");
+    var d = aegis_new(aegis_config_default());
+    var ev = security_event_new(EV_SANDBOX_ESCAPE, "test", 0, THREAT_CRITICAL, "boom");
+    var action = aegis_report_event(d, ev);
+    assert_eq(action, QA_NONE, "Critical w/o agent_id → None");
+    assert_eq(aegis_total_events(d), 1, "event still recorded");
+    return 0;
+}
+
+fn test_quarantine_links_events() {
+    test_group("quarantine_links_events");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_MALICIOUS_PAYLOAD, "t", "agent-x", THREAT_CRITICAL, "first"));
+    aegis_report_event(d, security_event_new(EV_SANDBOX_ESCAPE,    "t", "agent-x", THREAT_CRITICAL, "second"));
+    var entry = aegis_get_quarantine(d, "agent-x");
+    assert_eq(vec_len(q_events(entry)), 2, "two events linked to entry");
+    return 0;
+}
+
+fn test_auto_release_timeout_expired() {
+    test_group("auto_release_timeout_expired");
+    var d = aegis_new(aegis_config_default());
+    var entry = aegis_quarantine_agent(d, "agent-ar", "t", THREAT_MEDIUM);
+    # Force expiry into the past.
+    q_set_auto_release_at(entry, clock_epoch_secs() - 10);
+    var released = aegis_check_auto_releases(d);
+    assert_eq(vec_len(released),                    1, "one agent released");
+    assert_eq(aegis_is_quarantined(d, "agent-ar"), 0, "no longer quarantined");
+    return 0;
+}
+
+fn test_auto_release_timeout_not_expired() {
+    test_group("auto_release_timeout_not_expired");
+    var d = aegis_new(aegis_config_default());
+    var entry = aegis_quarantine_agent(d, "agent-nr", "t", THREAT_MEDIUM);
+    q_set_auto_release_at(entry, clock_epoch_secs() + 3600);
+    var released = aegis_check_auto_releases(d);
+    assert_eq(vec_len(released),                    0, "none released");
+    assert_eq(aegis_is_quarantined(d, "agent-nr"), 1, "still quarantined");
+    return 0;
+}
+
+fn test_auto_release_no_timeout_set() {
+    test_group("auto_release_no_timeout_set");
+    var d = aegis_new(aegis_config_default());  # default has timeout=None
+    aegis_quarantine_agent(d, "agent-nt", "t", THREAT_MEDIUM);
+    var released = aegis_check_auto_releases(d);
+    assert_eq(vec_len(released),                    0, "none released w/ no timeout");
+    assert_eq(aegis_is_quarantined(d, "agent-nt"), 1, "still quarantined");
+    return 0;
+}
+
+fn test_config_auto_release_populates_entry() {
+    test_group("config_auto_release_populates_entry");
+    var c = aegis_config_default();
+    aegis_config_set_auto_release_timeout_secs(c, 300);
+    var d = aegis_new(c);
+    var e = aegis_quarantine_agent(d, "agent-auto", "t", THREAT_MEDIUM);
+    var diff = q_auto_release_at(e) - clock_epoch_secs();
+    assert(diff >= 298, "auto_release_at ~300s in future (lower bound)");
+    assert(diff <= 302, "auto_release_at ~300s in future (upper bound)");
     return 0;
 }
 
@@ -200,6 +363,22 @@ fn main() {
     test_aegis_events_by_threat();
     test_aegis_unresolved_events_and_resolve();
     test_aegis_max_events_prunes_oldest();
+    test_quarantine_action_labels();
+    test_quarantine_and_release();
+    test_release_non_quarantined();
+    test_get_quarantine_entry();
+    test_quarantined_agents_list();
+    test_quarantine_no_downgrade();
+    test_quarantine_escalates_and_appends_reason();
+    test_auto_quarantine_on_critical();
+    test_auto_quarantine_on_high();
+    test_no_quarantine_on_medium();
+    test_no_quarantine_without_agent_id();
+    test_quarantine_links_events();
+    test_auto_release_timeout_expired();
+    test_auto_release_timeout_not_expired();
+    test_auto_release_no_timeout_set();
+    test_config_auto_release_populates_entry();
     return assert_summary();
 }
 
