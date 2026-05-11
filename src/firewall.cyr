@@ -1,0 +1,156 @@
+# aegis — firewall enforcement (nein integration).
+#
+# Translates QuarantineAction values (QA_ISOLATE, QA_RATELIMIT) and
+# the baseline host posture into nein Firewall rulesets. The returned
+# fw pointer renders to nftables source via firewall_render(fw); the
+# consumer (daimon) is responsible for applying it.
+#
+# Frozen rust spec lives at docs/reference/firewall.rs.ref — keep
+# table-name prefixes (aegis_iso_, aegis_rl_, aegis_host) and rule
+# comments in sync so wire-level diffs against the rust output stay
+# zero. Tests in tests/aegis.tcyr mirror the rust #[cfg(test)] cases.
+
+# ----------------------------------------------------------------
+# Helpers — build the per-agent table name "aegis_<prefix>_<id>"
+# as a cstr (nein's table_new expects cstring). agent_id flows in
+# as a cstr, matches aegis's API-boundary convention.
+# ----------------------------------------------------------------
+fn _aegis_fw_table_name(prefix_cstr, agent_id_cstr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "aegis_");
+    str_builder_add_cstr(sb, prefix_cstr);
+    str_builder_add_cstr(sb, "_");
+    str_builder_add_cstr(sb, agent_id_cstr);
+    return str_data(str_builder_build(sb));
+}
+
+fn _aegis_fw_comment(prefix_cstr, agent_id_cstr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "aegis ");
+    str_builder_add_cstr(sb, prefix_cstr);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, agent_id_cstr);
+    return str_data(str_builder_build(sb));
+}
+
+# ----------------------------------------------------------------
+# isolate_agent — drops all traffic to and from agent_addr.
+# Inet-family table; per-agent input + output chains; AGENT default
+# policies stay accept (caller may layer a base policy via
+# hardened_host or their own table on a different priority).
+# ----------------------------------------------------------------
+fn aegis_isolate_agent(agent_id_cstr, agent_addr_cstr) {
+    var fw = firewall_new();
+    var table_name = _aegis_fw_table_name("iso", agent_id_cstr);
+    var t = table_new(table_name, FAMILY_INET);
+
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0 - 1, POLICY_ACCEPT);
+    var input_drop = rule_new(verdict_drop());
+    rule_add_match(input_drop, match_dest_addr(agent_addr_cstr));
+    rule_set_comment(input_drop, _aegis_fw_comment("isolate", agent_id_cstr));
+    chain_add_rule(input, input_drop);
+
+    var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0 - 1, POLICY_ACCEPT);
+    var output_drop = rule_new(verdict_drop());
+    rule_add_match(output_drop, match_source_addr(agent_addr_cstr));
+    rule_set_comment(output_drop, _aegis_fw_comment("isolate", agent_id_cstr));
+    chain_add_rule(output, output_drop);
+
+    table_add_chain(t, input);
+    table_add_chain(t, output);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+# ----------------------------------------------------------------
+# rate_limit_agent — accept up to pps packets/second (burst = 2*pps),
+# drop the rest. Symmetric on input + output. Matches the rust spec
+# byte-for-byte: the accept rule comes first (`limit rate N/second
+# burst 2N`), then a catch-all drop rule for the same address so
+# anything over the limit is dropped.
+# ----------------------------------------------------------------
+fn aegis_rate_limit_agent(agent_id_cstr, agent_addr_cstr, pps) {
+    var fw = firewall_new();
+    var table_name = _aegis_fw_table_name("rl", agent_id_cstr);
+    var t = table_new(table_name, FAMILY_INET);
+    var burst = pps * 2;
+    var accept_comment = _aegis_fw_comment("rate-limit", agent_id_cstr);
+    var drop_comment   = _aegis_fw_comment("rate-limit drop", agent_id_cstr);
+
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0 - 1, POLICY_ACCEPT);
+    var input_accept = rule_new(verdict_accept());
+    rule_add_match(input_accept, match_dest_addr(agent_addr_cstr));
+    rule_add_match(input_accept, match_limit(pps, RATE_SECOND, burst));
+    rule_set_comment(input_accept, accept_comment);
+    chain_add_rule(input, input_accept);
+    var input_drop = rule_new(verdict_drop());
+    rule_add_match(input_drop, match_dest_addr(agent_addr_cstr));
+    rule_set_comment(input_drop, drop_comment);
+    chain_add_rule(input, input_drop);
+
+    var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0 - 1, POLICY_ACCEPT);
+    var output_accept = rule_new(verdict_accept());
+    rule_add_match(output_accept, match_source_addr(agent_addr_cstr));
+    rule_add_match(output_accept, match_limit(pps, RATE_SECOND, burst));
+    rule_set_comment(output_accept, accept_comment);
+    chain_add_rule(output, output_accept);
+    var output_drop = rule_new(verdict_drop());
+    rule_add_match(output_drop, match_source_addr(agent_addr_cstr));
+    rule_set_comment(output_drop, drop_comment);
+    chain_add_rule(output, output_drop);
+
+    table_add_chain(t, input);
+    table_add_chain(t, output);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+# ----------------------------------------------------------------
+# hardened_host — baseline host posture. Drop inbound by default,
+# allow established/related + loopback + SSH + ICMP echo. Forward
+# defaults drop (we're not a router); output stays accept.
+# ----------------------------------------------------------------
+fn aegis_hardened_host() {
+    var fw = firewall_new();
+    var t = table_new("aegis_host", FAMILY_INET);
+
+    var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0, POLICY_DROP);
+    chain_add_rule(input, allow_established());
+    var lo_rule = rule_new(verdict_accept());
+    rule_add_match(lo_rule, match_iif("lo"));
+    rule_set_comment(lo_rule, "loopback");
+    chain_add_rule(input, lo_rule);
+    var ssh = allow_tcp(22);
+    rule_set_comment(ssh, "SSH");
+    chain_add_rule(input, ssh);
+    var ping = rule_new(verdict_accept());
+    rule_add_match(ping, match_protocol("icmp"));
+    rule_add_match(ping, match_icmp_type("echo-request"));
+    rule_set_comment(ping, "ping");
+    chain_add_rule(input, ping);
+
+    var output  = chain_base("output",  CHAIN_FILTER, HOOK_OUTPUT,  0, POLICY_ACCEPT);
+    var forward = chain_base("forward", CHAIN_FILTER, HOOK_FORWARD, 0, POLICY_DROP);
+
+    table_add_chain(t, input);
+    table_add_chain(t, output);
+    table_add_chain(t, forward);
+    firewall_add_table(fw, t);
+    return fw;
+}
+
+# ----------------------------------------------------------------
+# Render passthrough so consumers can grab the nftables source via
+# the aegis surface without taking a direct nein dep themselves.
+# Returns a Str* with the full ruleset (text form).
+# ----------------------------------------------------------------
+fn aegis_firewall_render(fw) { return firewall_render(fw); }
+
+# nein returns a tagged Result (Ok(0) / Err(code)); aegis surfaces
+# 0 = ok, 1 = invalid for boundary uniformity with the rest of the
+# library (cstrs in, plain ints out). Consumers that need the raw
+# error code can call firewall_validate directly via the dist bundle.
+fn aegis_firewall_validate(fw) {
+    if (is_err_result(firewall_validate(fw)) == 1) { return 1; }
+    return 0;
+}

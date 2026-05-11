@@ -3,6 +3,16 @@
 # First-slice tests: enums + label round-trips + SecurityEvent construction.
 
 include "src/lib.cyr"
+include "src/firewall.cyr"
+
+# Helper: assert that a rendered nftables Str* contains the given
+# cstr substring. Wraps both sides as Str* and delegates to
+# str_contains. Keeps the firewall tests' arrange/assert blocks
+# tight at the call site.
+fn _fw_assert_contains(rendered, needle_cstr, name) {
+    assert(str_contains(rendered, str_from(needle_cstr)) == 1, name);
+    return 0;
+}
 
 fn test_threat_level_labels() {
     test_group("threat_level_labels");
@@ -1017,7 +1027,76 @@ fn main() {
     test_ring_buffer_overwrite_oldest();
     test_ring_buffer_iteration_order_after_wrap();
     test_ring_buffer_cap_clamp();
+    test_firewall_isolate_renders();
+    test_firewall_isolate_validates();
+    test_firewall_rate_limit_renders();
+    test_firewall_rate_limit_validates();
+    test_firewall_hardened_host_renders();
+    test_firewall_hardened_host_validates();
     return assert_summary();
+}
+
+# ================================================================
+# Firewall builders (nein integration). Mirrors the 6 #[cfg(test)]
+# cases in docs/reference/firewall.rs.ref so the cyrius port stays
+# wire-compatible with the frozen rust spec.
+# ================================================================
+
+fn test_firewall_isolate_renders() {
+    test_group("firewall_isolate_renders");
+    var fw = aegis_isolate_agent("agent-1", "10.100.0.2");
+    var rendered = aegis_firewall_render(fw);
+    _fw_assert_contains(rendered, "table inet aegis_iso_agent-1", "table header");
+    _fw_assert_contains(rendered, "ip daddr 10.100.0.2",          "input drops daddr");
+    _fw_assert_contains(rendered, "ip saddr 10.100.0.2",          "output drops saddr");
+    _fw_assert_contains(rendered, "drop",                         "drop verdict present");
+    _fw_assert_contains(rendered, "aegis isolate agent-1",        "rule comment");
+    return 0;
+}
+
+fn test_firewall_isolate_validates() {
+    test_group("firewall_isolate_validates");
+    var fw = aegis_isolate_agent("agent-1", "10.100.0.2");
+    assert_eq(aegis_firewall_validate(fw), 0, "isolate firewall validates");
+    return 0;
+}
+
+fn test_firewall_rate_limit_renders() {
+    test_group("firewall_rate_limit_renders");
+    var fw = aegis_rate_limit_agent("agent-1", "10.100.0.2", 100);
+    var rendered = aegis_firewall_render(fw);
+    _fw_assert_contains(rendered, "table inet aegis_rl_agent-1",            "table header");
+    _fw_assert_contains(rendered, "limit rate 100/second burst 200 packets", "rate limit clause");
+    _fw_assert_contains(rendered, "aegis rate-limit agent-1",                "accept rule comment");
+    _fw_assert_contains(rendered, "aegis rate-limit drop agent-1",           "drop rule comment");
+    return 0;
+}
+
+fn test_firewall_rate_limit_validates() {
+    test_group("firewall_rate_limit_validates");
+    var fw = aegis_rate_limit_agent("agent-1", "10.100.0.2", 50);
+    assert_eq(aegis_firewall_validate(fw), 0, "rate-limit firewall validates");
+    return 0;
+}
+
+fn test_firewall_hardened_host_renders() {
+    test_group("firewall_hardened_host_renders");
+    var fw = aegis_hardened_host();
+    var rendered = aegis_firewall_render(fw);
+    _fw_assert_contains(rendered, "table inet aegis_host",            "table header");
+    _fw_assert_contains(rendered, "policy drop",                      "default drop policy");
+    _fw_assert_contains(rendered, "ct state { established, related }", "established/related");
+    _fw_assert_contains(rendered, "dport 22",                         "SSH port");
+    _fw_assert_contains(rendered, "icmp type echo-request",           "ping rule");
+    _fw_assert_contains(rendered, "loopback",                         "loopback comment");
+    return 0;
+}
+
+fn test_firewall_hardened_host_validates() {
+    test_group("firewall_hardened_host_validates");
+    var fw = aegis_hardened_host();
+    assert_eq(aegis_firewall_validate(fw), 0, "hardened-host firewall validates");
+    return 0;
 }
 
 var exit_code = main();

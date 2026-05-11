@@ -18,3 +18,12 @@ git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
 tag = "1.2.1"
 modules = ["src/types.cyr", "src/error.cyr"]
+
+# Firewall enforcement for QA_ISOLATE / QA_RATELIMIT quarantine
+# actions. nein 1.5.0 ships a single-file dist bundle that exposes
+# the table_/chain_/rule_/match_/verdict_ API used by src/firewall.cyr.
+[deps.nein]
+git = "https://github.com/MacCracken/nein.git"
+path = "../nein"
+tag = "1.5.0"
+modules = ["dist/nein.cyr"]

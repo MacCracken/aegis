@@ -1,2 +1,4 @@
 a364fd53c9a89002342d26449e2fbbf8bc872849e4e4a3b37e5ffa1485936edf  lib/agnostik_types.cyr
 5cd73a3643dd9d15cb1ea92ec75ccef43995a2be50582f510f3de106e2707c35  lib/agnostik_error.cyr
+7a7fa0d70e323f92ed5c0c341cacb8eba52e3325ba7db0823a3972de2bd83841  lib/nein.cyr
+448d9fff752e4e08d7dcc8aca60610873e9f9ab47102aca785c51da0bcf0622d  lib/agnosys-core.cyr

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-10
+
+**Nein firewall integration — `QA_ISOLATE` / `QA_RATELIMIT` are real now.** The deferred-since-0.5 firewall enforcement path lands as `src/firewall.cyr`, a faithful port of the frozen rust spec at `docs/reference/firewall.rs.ref`. nein dependency added at `[deps.nein]` = `1.5.0` (cyrius `5.10.34`). Three public builders + a render + validate wrapper; tests mirror the six `#[cfg(test)]` cases from the rust spec. Wire-level diffs against the rust output are zero (table-name prefixes `aegis_iso_` / `aegis_rl_` / `aegis_host` and rule comments preserved verbatim). Total tests: **274 passed / 0 failed** (was 256).
+
+### Added
+
+- `[deps.nein]` in `cyrius.cyml` — git/path/tag pointing at nein 1.5.0, pulls `dist/nein.cyr` (single-file bundle) plus the transitive `dist/agnosys-core.cyr` it requires.
+- `src/firewall.cyr` — three public builders + two passthrough wrappers:
+  - `aegis_isolate_agent(agent_id_cstr, agent_addr_cstr) → fw*` — drops all traffic to/from the agent address (inet table `aegis_iso_<agent_id>`, input + output chains, drop verdicts with `aegis isolate <agent_id>` comments).
+  - `aegis_rate_limit_agent(agent_id_cstr, agent_addr_cstr, pps) → fw*` — accept up to `pps` packets/second (burst = `2*pps`), drop the rest. Symmetric on input + output. Comments `aegis rate-limit <agent_id>` / `aegis rate-limit drop <agent_id>`.
+  - `aegis_hardened_host() → fw*` — baseline host posture: input default drop with allow-established/loopback/SSH/ICMP-echo carve-outs; output accept; forward drop. Table `aegis_host`.
+  - `aegis_firewall_render(fw) → Str*` — passthrough to `firewall_render` so consumers can grab nftables source via the aegis surface.
+  - `aegis_firewall_validate(fw) → i64` — converts nein's tagged `Result` (`Ok(0)` / `Err(code)`) to aegis's boundary convention: `0 = ok, 1 = invalid`.
+- 6 new test groups in `tests/aegis.tcyr` (18 assertions): isolate/rate-limit/hardened-host × renders + validates. Each render assertion checks specific nftables clauses that match the rust spec's `assert!(rendered.contains(...))` calls verbatim.
+
+### Architecture
+
+- `src/main.cyr` now `include`s both `src/lib.cyr` and `src/firewall.cyr`. The new module is independent of the daemon record — it's a sibling slice of the public API, mirroring the rust spec's standalone-function shape. Coupling firewall generation into `aegis_quarantine_agent` would require adding an `agent_addr` to the `QuarantineEntry` record; the rust spec deliberately kept these decoupled (aegis decides the action, the consumer applies the ruleset with addresses it owns), so we follow suit.
+
+### Notes
+
+- Out-of-scope items from the prior 0.9.0 plan (API surface snapshot script + CI gate, full audit pass, doc polish, one downstream consumer green) shift to 0.10.x. The API snapshot in particular needed nein to land first — without it, `aegis_quarantine_agent` with `QA_ISOLATE` / `QA_RATELIMIT` was placeholder behaviour, and freezing a placeholder surface would have been wire-meaningless.
+- nein pulls in `lib/agnosys-core.cyr` as a transitive dep (its own `[deps.agnosys]`). aegis doesn't reference any agnosys-core symbols directly; DCE drops everything not transitively reachable from `main`.
+
 ## [0.8.3] — 2026-05-10
 
 **Toolchain + dependency refresh.** Cyrius pin moves to `5.10.34`; agnostik dep tag moves to `1.2.1` (was `1.0.0`). The `lib/` tree is now gitignored and repopulated by `cyrius deps` from the version-pinned snapshot — matches the agnosys/agnostik convention and prevents stale stubs from a prior cyrius version sitting in tree. CI and release workflows install the toolchain into `~/.cyrius/versions/<V>/{bin,lib}` with symlinks, which cc5 5.10.9+ requires for arch-peer include resolution (e.g. `syscalls_x86_64_linux.cyr`). No source / behaviour change.

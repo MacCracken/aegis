@@ -2,6 +2,7 @@
 # Library types live in src/lib.cyr.
 
 include "src/lib.cyr"
+include "src/firewall.cyr"
 
 fn main() {
     alloc_init();

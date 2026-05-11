@@ -7,7 +7,7 @@
 
 ## Version
 
-**0.8.3** — toolchain + dep refresh (2026-05-10). Cyrius pin `5.10.0` → `5.10.34`; agnostik dep `1.0.0` → `1.2.1`. `lib/` now gitignored and repopulated by `cyrius deps`. CI/release install the toolchain into the version-pinned `~/.cyrius/versions/<V>/{bin,lib}` layout that cc5 5.10.9+ requires for arch-peer include resolution. No source / behaviour change. Carries forward 0.8.2's fuzz harness + audit script, 0.8.1's ring-buffer events log, and 0.8.0's JSON serde surface.
+**0.9.0** — nein firewall integration (2026-05-10). The deferred-since-0.5 firewall enforcement path lands as `src/firewall.cyr`: faithful port of `docs/reference/firewall.rs.ref` against nein 1.5.0, three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) plus render + validate wrappers. Wire-level diffs against the rust spec are zero. Tests now **274 passed / 0 failed** (was 256). Carries forward 0.8.3's toolchain refresh, 0.8.2's fuzz + audit, 0.8.1's ring-buffer events log, 0.8.0's JSON serde.
 
 ## Toolchain
 
@@ -18,15 +18,16 @@
 
 ## Source
 
-- `src/lib.cyr` — full library surface: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points, fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
-- `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, prints `"aegis ready"`.
-- `docs/reference/firewall.rs.ref` — frozen rust spec for the (deferred) nein firewall integration. Read-only; do not modify.
+- `src/lib.cyr` — core library: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points, fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
+- `src/firewall.cyr` — nein integration. Three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) + `aegis_firewall_render` / `aegis_firewall_validate` wrappers. Standalone surface — not coupled to `QuarantineEntry`; the rust spec keeps the same shape. Consumers (daimon) decide when to call the builder based on the `QuarantineAction` they read from the entry.
+- `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, prints `"aegis ready"`. Includes both `lib.cyr` and `firewall.cyr`.
+- `docs/reference/firewall.rs.ref` — frozen rust spec the firewall port mirrors. Read-only; do not modify.
 
 ## Tests / fuzz / bench
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **256 passed / 0 failed** across 73 test groups. |
+| `tests/aegis.tcyr` | **274 passed / 0 failed** across 79 test groups (6 new firewall groups in 0.9.0). |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
 | `tests/aegis.bcyr` | 3 benches: `aegis_next_id` ≈ 2 µs, `security_event_new` ≈ 3 µs, `aegis_report_event` ≈ 4 µs (avg, 50–100k iter). History in [`bench-history.csv`](../../bench-history.csv). |
 
@@ -36,6 +37,7 @@ Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — `string`, `fmt`, `alloc`, `vec`, `str`, `syscalls`, `io`, `args`, `assert`, `tagged`, `chrono`, `hashmap`, `bench`, `fnptr`, `sakshi`, `json`, `random`.
 - **agnostik (v1.2.1)** — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by `types.cyr`'s parser paths we don't call, but the compiler needs the symbol). `lib/agnostik_*.cyr` is auto-resolved by `cyrius deps` from the version-pinned tag — not committed to the repo.
+- **nein (v1.5.0)** — `dist/nein.cyr` single-file bundle (`firewall_*` / `table_*` / `chain_*` / `rule_*` / `match_*` / `verdict_*` API + constants). Used by `src/firewall.cyr` to build nftables rulesets for `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions and the hardened-host baseline. Pulls `lib/agnosys-core.cyr` as a transitive dep (nein's own `[deps.agnosys]`); aegis doesn't reference agnosys-core symbols, so DCE drops them.
 
 ## Consumers
 
@@ -43,4 +45,4 @@ _None yet_ — daimon and argonaut are the planned downstream consumers; pull `s
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). Remaining work: **0.9.0 V1 prep** (API surface snapshot, full audit, doc polish, one downstream consumer green) → **1.0.0 freeze**. The nein firewall integration stays out of v1.0 scope until nein modernises its language pin.
+See [`roadmap.md`](roadmap.md). Remaining work: **0.10.x V1 prep** (API surface snapshot, full audit, doc polish, one downstream consumer green) → **1.0.0 freeze**. The API snapshot is now meaningful — the public surface does load-bearing enforcement (firewall builders generate real nftables rulesets) instead of placeholder enum-only behaviour.
