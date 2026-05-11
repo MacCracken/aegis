@@ -21,7 +21,7 @@
 - [x] **0.9.2 V1 prep** — API surface snapshot + CI gate (`scripts/check-api-surface.sh`); doc-health ledger (`docs/doc-health.md`); README API list polished to cover all 151 public fns; example consumer at `docs/examples/basic_consumer.cyr` exercising the surface end-to-end (stand-in until daimon/argonaut consume directly)
 - [x] **0.9.3 P(-1) hardening** — first audit report at `docs/audit/2026-05-10-audit.md`; F-1/F-2/F-3/F-4/F-5/F-8 boundary-validation fixes against the 2024-2026 CVE landscape; tests 303/0 (was 274/0)
 - [x] **0.9.4 P(-1) follow-up** — F-7 Unicode quarantine bypass (`_aegis_valid_agent_id` applied to quarantine API; `### Breaking` contract change) + F-9 sentinel-audit annotations (`_AEGIS_SERDE_INVALID` named constant); tests 322/0 (was 303/0)
-- [ ] **0.9.5** — F-6 TOCTOU close-out (cyrius stdlib `sys_lstat` patch + scanner switch), or skip-ahead to openat refactor
+- [x] **0.9.5 audit close-out** — F-6 TOCTOU fixed via openat-style refactor (`open(O_NOFOLLOW)+fstat+close`; second `### Breaking`); all 9 audit findings now closed; tests 326/0 (was 322/0)
 - [ ] **1.0.0 release** — clean review/audit before cut; no new deliverables
 
 ## Shipped milestones
@@ -40,6 +40,7 @@
 | **0.9.2** | V1 prep — API surface CI gate, doc-health ledger, README API polish, example consumer | 2026-05-10 |
 | **0.9.3** | P(-1) hardening — first audit report; F-1..F-5 + F-8 boundary fixes; tests 274 → 303 | 2026-05-10 |
 | **0.9.4** | P(-1) follow-up — F-7 quarantine-API whitelist (`### Breaking`) + F-9 sentinel annotations; tests 303 → 322 | 2026-05-10 |
+| **0.9.5** | Audit close-out — F-6 scanner refuses symlinks (`### Breaking`); all 9 findings closed; tests 322 → 326 | 2026-05-10 |
 
 ## Upcoming milestones
 

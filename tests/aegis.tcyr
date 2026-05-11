@@ -1047,6 +1047,8 @@ fn main() {
     test_p1_quarantine_is_get_reject_bad();
     test_p1_security_event_strips_bad_agent_id();
     test_p1_quarantine_accepts_good_input();
+    # 0.9.5 F-6: scanner refuses to follow symlinks
+    test_p1_scan_refuses_to_follow_symlink();
     return assert_summary();
 }
 
@@ -1342,6 +1344,49 @@ fn test_p1_quarantine_accepts_good_input() {
     assert_neq(e, 0, "valid agent_id quarantine succeeds");
     var e2 = aegis_quarantine_agent(d, "Agent.X_2", "x", THREAT_HIGH);
     assert_neq(e2, 0, "valid mixed-id accepted");
+    return 0;
+}
+
+# ================================================================
+# 0.9.5 P(-1) F-6 — scanner uses open(O_NOFOLLOW)+fstat+close, so a
+# symlinked path no longer dereferences to its target. Closes the
+# CWE-367 / CVE-2025-2425 (ESET) / CVE-2025-22224 (VMware) class.
+# Symlinked paths now look like missing files (collapsed failure
+# mode), which is the safer posture for a security scanner.
+# ================================================================
+
+fn test_p1_scan_refuses_to_follow_symlink() {
+    test_group("p1_scan_refuses_to_follow_symlink");
+    var target = "/tmp/aegis_f6_target";
+    var link   = "/tmp/aegis_f6_link";
+    # Pre-clean and set up: a real file at `target`, symlink → target at `link`.
+    _tmp_unlink(target);
+    _tmp_unlink(link);
+    _tmp_write(target, "binary-content", 0x1A4); # 0o644
+    var rc = sys_symlink(target, link);
+    assert_eq(rc, 0, "sys_symlink succeeded");
+
+    var d = aegis_new(aegis_config_default());
+
+    # Baseline: scanning the real file → clean.
+    var r1 = aegis_scan_agent(d, "agent-target", target);
+    assert_eq(scan_clean(r1), 1, "real file scans clean");
+
+    # F-6: scanning the symlink path → "unreadable_metadata" finding.
+    # file_exists() still follows the symlink (uses bare open) so the
+    # file "exists", but _aegis_stat_modesize now refuses to follow
+    # — open(O_NOFOLLOW) returns -ELOOP, fstat never runs, metadata is
+    # marked unreadable. The scan is non-clean and the finding signals
+    # the consumer to investigate without aegis having dereferenced
+    # the link's target on its behalf.
+    var r2 = aegis_scan_agent(d, "agent-link", link);
+    assert_eq(scan_clean(r2), 0,
+    "symlink scan is NOT clean (would be clean pre-0.9.5)");
+    assert_eq(_findings_have_category(scan_findings(r2), "unreadable_metadata"), 1,
+    "symlink path surfaces unreadable_metadata finding");
+
+    _tmp_unlink(link);
+    _tmp_unlink(target);
     return 0;
 }
 

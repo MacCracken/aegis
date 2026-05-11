@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-05-10
+
+**Closes F-6 from the 0.9.3 audit — every audit finding is now resolved or partial-fix-with-deferred-deeper-fix (F-8 only).** Scanner switched to `open(O_NOFOLLOW)+fstat+close`, refusing to dereference symlinks. Tests **326 passed / 0 failed** (was 322; +1 new test group with sys_symlink setup). API surface unchanged at 151 public fns. The 1.0.0 sign-off cut is now clear of open audit blockers.
+
+### Breaking
+
+- **`aegis_scan_agent` and `aegis_scan_package` no longer follow symlinks.** A symlinked binary path that would previously have scanned the target's metadata now surfaces an `unreadable_metadata` finding (the file is reachable per `file_exists`, but `_aegis_stat_modesize` refuses to follow). Migration: consumers that legitimately scan symlinked binaries (e.g. `/usr/bin/python` → `python3.11`) must canonicalize the path at their own boundary before passing it in. Same posture as `aegis_check_database_integrity`. Second `### Breaking` in 0.9.x — pre-1.0 contract changes are intentional; 1.0.0 freezes the surface.
+
+### Security
+
+- **F-6 (HIGH, CWE-367)** — TOCTOU + symlink follow class (CVE-2025-2425 ESET, CVE-2025-22224 VMware ESXi, CVE-2024-50379 Tomcat) closed. `_aegis_stat_modesize` now uses `sys_open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0)` → `sys_fstat(fd, sb)` → `sys_close(fd)`. On a symlink the open returns `-ELOOP`; aegis returns `0` (failure) and the existing scanner failure path emits `unreadable_metadata`.
+
+### Added
+
+- `_AEGIS_O_NOFOLLOW = 131072` local constant in `src/lib.cyr`. Stable POSIX flag value on x86_64 + aarch64 Linux (verified against `include/uapi/asm-generic/fcntl.h`). The cyrius stdlib's `lib/syscalls_*_linux.cyr` doesn't expose `O_NOFOLLOW` yet — defined locally with an upstream-this comment so the constant moves to the stdlib later and aegis swaps to the global. Single grep target for the migration.
+- `test_p1_scan_refuses_to_follow_symlink` — sets up a real file + symlink → real file via `sys_symlink`, scans both: real file scans clean, symlink scan surfaces `unreadable_metadata` finding. Cleanup at end.
+
+### Notes
+
+- All 9 audit findings from `docs/audit/2026-05-10-audit.md` are now closed (F-1, F-2, F-3, F-4, F-5, F-6, F-7, F-9) or have a partial-fix-in-aegis with the deeper fix tracked as a future stdlib change (F-8: input-length cap is the partial; depth cap belongs in `lib/json.cyr`).
+- 1.0.0 sign-off can proceed — no security-class blockers remain.
+
+### Verification
+
+- `scripts/audit.sh` green end-to-end.
+- `scripts/check-api-surface.sh`: 151 public fns, surface matches snapshot exactly.
+- All 326 tests pass; example consumer still produces `action=terminate events=1 ruleset_bytes=310`.
+
 ## [0.9.4] — 2026-05-10
 
 **P(-1) follow-up — closes F-7 (Unicode quarantine bypass) and F-9 (sentinel audit) from the 0.9.3 audit report.** F-6 (TOCTOU + symlink follow) re-deferred to 0.9.5 once the cyrius stdlib gains a `sys_lstat` wrapper — see `docs/audit/2026-05-10-audit.md` F-6 update for the rationale. Tests **322 passed / 0 failed** (was 303; +5 new test groups, +19 new assertions). API surface unchanged at 151 public fns (helpers stay `_aegis_*` private).

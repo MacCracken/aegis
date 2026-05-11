@@ -899,11 +899,37 @@ fn _aegis_ensure_scan_history(d) {
     return aegis_scan_history(d);
 }
 
-# Stat a path. Returns 1 on success and writes mode at out+0 and
-# size at out+8. Returns 0 on failure.
+# 0.9.5 F-6 fix — refuse to follow symlinks during scans.
+#
+# O_NOFOLLOW (Linux): if the trailing path component is a symlink,
+# open(2) fails with -ELOOP instead of dereferencing. Stable POSIX
+# flag value 0x20000 (= 131072) on every Linux arch aegis targets
+# (x86_64 + aarch64 — verified against include/uapi/asm-generic/
+# fcntl.h). The cyrius stdlib's lib/syscalls_*_linux.cyr exposes
+# O_RDONLY / O_CLOEXEC but not O_NOFOLLOW yet — define locally
+# until that lands upstream, then remove this and use the global.
+# See docs/audit/2026-05-10-audit.md F-6 for the CWE-367 / CVE-2025-2425
+# (ESET) / CVE-2025-22224 (VMware) / CVE-2024-50379 (Tomcat) class.
+var _AEGIS_O_NOFOLLOW = 131072;
+
+# Stat a path WITHOUT following symlinks. Pattern: open(O_RDONLY |
+# O_CLOEXEC | O_NOFOLLOW) → fstat(fd) → close(fd). Returns 1 on
+# success and writes mode at out+0 and size at out+8. Returns 0 on
+# failure (missing path, permission denied, OR symlink — all collapse
+# to the same finding, treat as "binary inaccessible").
+#
+# Behaviour change vs. 0.9.4: scanning a path whose trailing component
+# is a symlink now fails instead of silently dereferencing the target.
+# Consumers that legitimately scan symlinked binaries (e.g. /usr/bin/
+# python → python3.11) must canonicalize the path at their own boundary
+# before passing it in. This closes the TOCTOU between aegis's stat
+# and the consumer's action — see CHANGELOG 0.9.5 ### Breaking.
 fn _aegis_stat_modesize(path_cstr, out) {
+    var fd = sys_open(path_cstr, O_RDONLY | O_CLOEXEC | _AEGIS_O_NOFOLLOW, 0);
+    if (fd < 0) { return 0; }
     var sb[144];
-    var rc = sys_stat(path_cstr, &sb);
+    var rc = sys_fstat(fd, &sb);
+    sys_close(fd);
     if (rc < 0) { return 0; }
     var mode = load64(&sb + STAT_MODE) & 0xFFFFFFFF;
     var size = load64(&sb + STAT_SIZE);

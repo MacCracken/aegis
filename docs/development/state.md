@@ -7,7 +7,7 @@
 
 ## Version
 
-**0.9.4** — P(-1) follow-up (2026-05-10). Closes F-7 (Unicode quarantine bypass — `_aegis_valid_agent_id` moved to lib.cyr and applied across the quarantine API; `### Breaking` contract change) and F-9 (sentinel-audit annotation pass — named `_AEGIS_SERDE_INVALID` constant). F-6 (TOCTOU + symlink follow) re-deferred to 0.9.5 — needs cyrius stdlib `sys_lstat` first. Tests **322 passed / 0 failed** (was 303; +5 groups +19 assertions). API surface unchanged at 151 public fns. Audit report at [`docs/audit/2026-05-10-audit.md`](../audit/2026-05-10-audit.md) updated with F-7/F-9 fixed status and F-6 sharper deferral rationale. After this release, 0.9.5 lands the F-6 fix (cyrius stdlib patch + scanner switch); 1.0.0 is the sign-off cut. Carries forward 0.9.3's six boundary fixes, 0.9.2's V1 prep, 0.9.1's rust-scaffold retirement, 0.9.0's nein firewall integration.
+**0.9.5** — closes the audit (2026-05-10). F-6 (TOCTOU + symlink follow) fixed via openat-style refactor: `_aegis_stat_modesize` now uses `sys_open(O_NOFOLLOW)+sys_fstat+sys_close` — symlinked binary paths no longer dereference, surface as `unreadable_metadata` findings. Local `_AEGIS_O_NOFOLLOW = 131072` constant pending cyrius stdlib upstream. `### Breaking` (2nd in 0.9.x; pre-1.0 contract changes intentional). All 9 audit findings now closed (or partial-fix-with-tracked-deeper-fix in F-8's case). Tests **326 passed / 0 failed** (was 322; +1 group with sys_symlink test setup). API surface unchanged at 151 public fns. **1.0.0 sign-off cut is now clear of audit blockers.** Carries forward 0.9.4's quarantine-API tightening + sentinel annotations, 0.9.3's six boundary fixes, 0.9.2's V1 prep, 0.9.1's rust-scaffold retirement, 0.9.0's nein firewall integration.
 
 ## Toolchain
 
@@ -26,7 +26,7 @@
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **322 passed / 0 failed** across 91 test groups (6 firewall in 0.9.0; 7 P(-1)-hardening in 0.9.3; 5 quarantine-validator in 0.9.4). |
+| `tests/aegis.tcyr` | **326 passed / 0 failed** across 92 test groups (6 firewall in 0.9.0; 7 P(-1)-hardening in 0.9.3; 5 quarantine-validator in 0.9.4; 1 scan-no-follow-symlink in 0.9.5). |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
 | `tests/aegis.bcyr` | 3 benches: `aegis_next_id` ≈ 2 µs, `security_event_new` ≈ 3 µs, `aegis_report_event` ≈ 4 µs (avg, 50–100k iter). History in [`bench-history.csv`](../../bench-history.csv). |
 

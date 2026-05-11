@@ -100,7 +100,7 @@ Date-stamped, frozen by design. Each P(-1) hardening pass per CLAUDE.md cadence 
 
 | File | Date | Status | Notes |
 |---|---|---|---|
-| `2026-05-10-audit.md` | 2026-05-10 | ✅ Fresh | First P(-1) audit (initial cut paired with 0.9.3; F-7 + F-9 status flipped to Fixed in 0.9.4 update; F-6 re-deferred to 0.9.5 with sharper rationale). 9 findings: F-1/F-2/F-3/F-4/F-5/F-8 fixed in 0.9.3; F-7 + F-9 fixed in 0.9.4; F-6 in 0.9.5 (blocked on cyrius stdlib `sys_lstat` patch). CVE landscape research 2024-2026 (Wazuh, osquery, ESET, VMware, Tomcat, Jackson, Spring, Android KEV). |
+| `2026-05-10-audit.md` | 2026-05-10 | ✅ Fresh | First P(-1) audit (initial cut 0.9.3; F-7 + F-9 fixed 0.9.4; F-6 fixed 0.9.5). All 9 findings closed (F-8 has a partial fix with the deeper depth-cap tracked as a `lib/json.cyr` upstream change). CVE landscape research 2024-2026 (Wazuh, osquery, ESET, VMware, Tomcat, Jackson, Spring, Android KEV). |
 
 Next audit slot: at v1.0.0 sign-off cut (or sooner if a CVE pattern surfaces in nein, the cyrius json stdlib, or the agnostik UUID surface).
 
