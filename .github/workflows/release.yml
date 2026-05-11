@@ -54,7 +54,11 @@ jobs:
           echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
-          cc5 --version
+
+      - name: Verify toolchain
+        # `>> $GITHUB_PATH` only applies to subsequent steps — must be
+        # a separate step or `cc5` is not on PATH yet.
+        run: cc5 --version
 
       - name: Resolve deps
         run: cyrius deps

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `cyrius.cyml [package].cyrius` — `5.10.0` → `5.10.34`.
 - `cyrius.cyml [deps.agnostik].tag` — `1.0.0` → `1.2.1`.
-- `.github/workflows/ci.yml` + `release.yml` — toolchain install lays out `~/.cyrius/versions/<CYRIUS_VERSION>/{bin,lib}` and symlinks `~/.cyrius/{bin,lib}` to the versioned dir (cc5 5.10.9+ requires the version-pinned layout to find arch-peer includes). Drops the `Verify toolchain` step (rolled into the install step).
+- `.github/workflows/ci.yml` + `release.yml` — toolchain install lays out `~/.cyrius/versions/<CYRIUS_VERSION>/{bin,lib}` and symlinks `~/.cyrius/{bin,lib}` to the versioned dir (cc5 5.10.9+ requires the version-pinned layout to find arch-peer includes). `Verify toolchain` stays as a separate step — `>> $GITHUB_PATH` only takes effect on subsequent steps, so inlining `cc5 --version` in the install step reports "cc5: command not found".
 
 ### Removed
 

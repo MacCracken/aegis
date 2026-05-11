@@ -40,7 +40,13 @@ jobs:
           echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
-          cc5 --version
+
+      - name: Verify toolchain
+        # Must be a separate step — `>> $GITHUB_PATH` only takes effect
+        # on subsequent steps, so inlining `cc5 --version` after the
+        # path append in the install step would still use the runner's
+        # original PATH and report "cc5: command not found".
+        run: cc5 --version
 
       - name: Resolve dependencies
         # Must run before any step that resolves `include "lib/..."`
