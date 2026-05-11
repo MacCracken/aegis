@@ -7,11 +7,11 @@
 
 ## Version
 
-**0.8.2** — polish bucket (2026-05-08). Real fuzz harness, 5 ADRs, `bench-history.csv` baseline, `scripts/audit.sh` mirroring CI. Carries forward 0.8.1's ring-buffer events log and 0.8.0's JSON serde surface.
+**0.8.3** — toolchain + dep refresh (2026-05-10). Cyrius pin `5.10.0` → `5.10.34`; agnostik dep `1.0.0` → `1.2.1`. `lib/` now gitignored and repopulated by `cyrius deps`. CI/release install the toolchain into the version-pinned `~/.cyrius/versions/<V>/{bin,lib}` layout that cc5 5.10.9+ requires for arch-peer include resolution. No source / behaviour change. Carries forward 0.8.2's fuzz harness + audit script, 0.8.1's ring-buffer events log, and 0.8.0's JSON serde surface.
 
 ## Toolchain
 
-- **Cyrius pin**: `5.10.0` (in `cyrius.cyml [package].cyrius`).
+- **Cyrius pin**: `5.10.34` (in `cyrius.cyml [package].cyrius`).
 - **CI**: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — toolchain install, `cyrius deps`, syntax check (`--with-deps`), fmt-diff, lint, vet, DCE build, ELF check, aarch64 cross-build (best-effort), smoke, full test suite, fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
 - **Release**: [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — runs CI, verifies tag matches `VERSION`, builds x86_64 + aarch64 (best-effort), packages source tarball + `aegis-<ver>-lib.cyr` + binaries + `SHA256SUMS`. `0.x` tags ship as prerelease.
 - **Local one-shot**: [`scripts/audit.sh`](../../scripts/audit.sh) — every CI gate locally.
@@ -35,7 +35,7 @@
 Direct (declared in `cyrius.cyml`):
 
 - **stdlib** — `string`, `fmt`, `alloc`, `vec`, `str`, `syscalls`, `io`, `args`, `assert`, `tagged`, `chrono`, `hashmap`, `bench`, `fnptr`, `sakshi`, `json`, `random`.
-- **agnostik (v1.0.0)** — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by `types.cyr`'s parser paths we don't call, but the compiler needs the symbol).
+- **agnostik (v1.2.1)** — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by `types.cyr`'s parser paths we don't call, but the compiler needs the symbol). `lib/agnostik_*.cyr` is auto-resolved by `cyrius deps` from the version-pinned tag — not committed to the repo.
 
 ## Consumers
 

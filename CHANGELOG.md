@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-05-10
+
+**Toolchain + dependency refresh.** Cyrius pin moves to `5.10.34`; agnostik dep tag moves to `1.2.1` (was `1.0.0`). The `lib/` tree is now gitignored and repopulated by `cyrius deps` from the version-pinned snapshot — matches the agnosys/agnostik convention and prevents stale stubs from a prior cyrius version sitting in tree. CI and release workflows install the toolchain into `~/.cyrius/versions/<V>/{bin,lib}` with symlinks, which cc5 5.10.9+ requires for arch-peer include resolution (e.g. `syscalls_x86_64_linux.cyr`). No source / behaviour change.
+
+### Changed
+
+- `cyrius.cyml [package].cyrius` — `5.10.0` → `5.10.34`.
+- `cyrius.cyml [deps.agnostik].tag` — `1.0.0` → `1.2.1`.
+- `.github/workflows/ci.yml` + `release.yml` — toolchain install lays out `~/.cyrius/versions/<CYRIUS_VERSION>/{bin,lib}` and symlinks `~/.cyrius/{bin,lib}` to the versioned dir (cc5 5.10.9+ requires the version-pinned layout to find arch-peer includes). Drops the `Verify toolchain` step (rolled into the install step).
+
+### Removed
+
+- `lib/` no longer tracked in git. `cyrius deps` repopulates it from `cyrius.cyml [deps]`. `.gitignore` now lists `/lib/`.
+
 ## [0.8.2] — 2026-05-08
 
 **Polish bucket — closes the remaining 0.8.x backlog.** Real fuzz targets, ADRs for the load-bearing decisions, baseline `bench-history.csv`, and a local `scripts/audit.sh` that mirrors the CI gates. Cyrius pin: `5.10.0`. No behaviour change; the audit script is the only thing consumers see.
