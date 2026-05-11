@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-10
+
+**First stable release.** No new functionality — the cut freezes the API surface that 0.5.0 → 0.9.5 built up. The 151-fn machine-checkable surface at `docs/development/api-surface-1.0.snapshot` is now the SemVer-stable contract: additions are non-breaking, removals or renames need a major bump.
+
+### Frozen at this cut
+
+- **API surface**: 151 public fns across 2 modules (146 `lib`, 5 `firewall`). CI gate `scripts/check-api-surface.sh` enforces — every PR diffs against the committed snapshot.
+- **Wire format**: JSON serde for all 8 records (snake_case fields, PascalCase enum variants, RFC 3339 timestamps, `null` for `Option::None`). Consumed by daimon / argonaut.
+- **Firewall ruleset shape**: nftables table-name prefixes (`aegis_iso_`, `aegis_rl_`, `aegis_host`) and rule comments. Treat any change as breaking.
+- **9/9 audit findings closed** (or partial-fix-with-tracked-deeper-fix). See [`docs/audit/2026-05-10-audit.md`](docs/audit/2026-05-10-audit.md).
+- **Two pre-1.0 `### Breaking` contract changes** (0.9.4 quarantine-API whitelist, 0.9.5 scanner-no-follow-symlinks) — both intentional, documented in their respective entries. From here on out, breaking changes need a major bump.
+
+### Verified at sign-off
+
+Per the M10 sign-off checklist (formerly in `docs/development/roadmap.md`):
+
+- `scripts/audit.sh` green end-to-end, every gate, zero warnings.
+- API snapshot matches `cyrius api-surface --scope=project` (151 fns).
+- `docs/doc-health.md`: zero rows in 🟡 stale bucket.
+- All 5 ADRs (`0001`–`0005`) Accepted; `001-cyrius-port-gaps.md` table has no rows still marked deferred.
+- `docs/examples/basic_consumer.cyr` builds and runs (`action=terminate events=1 ruleset_bytes=310`).
+
+### Tracked for v1.x (post-stable, non-blocking)
+
+- **Real downstream consumer integration** — daimon or argonaut consuming `src/lib.cyr` end-to-end. Stand-in `docs/examples/basic_consumer.cyr` exercises the surface but isn't a production consumer.
+- **F-8 deeper fix** — JSON parser depth cap belongs in `lib/json.cyr` upstream (cyrius stdlib). Aegis ships the input-length cap as a partial mitigation today.
+- **F-6 deeper fix** — pass open fd to consumer via `SecurityFinding` so the consumer's action operates on the same inode aegis stat'd. Adds API surface; held until a real consumer surfaces the requirement.
+- **`O_NOFOLLOW` migration to stdlib** — currently defined locally as `_AEGIS_O_NOFOLLOW = 131072` in `src/lib.cyr` with an upstream-this comment. Single grep target.
+- **Trace-ID propagation** (`sakshi_trace_set`) for cross-process correlation. Useful once a multi-process wire flow exists between aegis and a consumer.
+- **`scripts/bench.sh`** — auto-append `bench-history.csv` after each bench run. Currently hand-maintained.
+
 ## [0.9.5] — 2026-05-10
 
 **Closes F-6 from the 0.9.3 audit — every audit finding is now resolved or partial-fix-with-deferred-deeper-fix (F-8 only).** Scanner switched to `open(O_NOFOLLOW)+fstat+close`, refusing to dereference symlinks. Tests **326 passed / 0 failed** (was 322; +1 new test group with sys_symlink setup). API surface unchanged at 151 public fns. The 1.0.0 sign-off cut is now clear of open audit blockers.

@@ -1,63 +1,67 @@
 # aegis — Roadmap
 
-> Sequencing through v1.0. Live state lives in [`state.md`](state.md);
-> this file is the milestone plan — what ships, in what order, against
-> what dependency gates.
+> Forward-looking work only. Shipped milestones live in
+> [`../../CHANGELOG.md`](../../CHANGELOG.md) — that's the historical
+> record per Keep-a-Changelog. Live state lives in
+> [`state.md`](state.md). Doc currency in
+> [`../doc-health.md`](../doc-health.md).
+>
+> v1.0.0 cut on 2026-05-10. The 151-fn API at
+> [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) is the
+> SemVer-stable contract from this point forward.
 
-## v1.0 criteria
+## Open work (post-1.0)
 
-- [x] Surface parity with the prior Rust scaffold (13 records/enums + 22 daemon methods)
-- [x] Test suite covering every public method (≥ 250 assertions; targeted edge cases)
-- [x] Real fuzz harness against malformed input (no crashes in 1000 random + curated inputs)
-- [x] JSON wire format compatible with the consuming daimon / argonaut stack
-- [x] Structured logging (sakshi-full spans + logfmt) on every mutating entry point
-- [x] CHANGELOG complete from 0.5.0 onward (Keep-a-Changelog format)
-- [x] CI green: build, test, fuzz, bench, fmt, lint, vet, security scan, doc gate
-- [x] Local audit script (`scripts/audit.sh`) mirrors CI gates one-shot
-- [x] `bench-history.csv` baseline so perf regressions surface
-- [x] ADRs for every load-bearing design decision (sentinels, cstr API, hashmap flavor, ring buffer)
-- [x] **0.9.0 nein firewall integration** — `aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host` via nein 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` are no longer placeholder actions
-- [x] **0.9.1 rust scaffold retired** — `docs/reference/firewall.rs.ref` deleted; supporting "do not modify the rust spec" guidance removed across CLAUDE.md / CONTRIBUTING.md / SECURITY.md / README.md / docs / inline comments
-- [x] **0.9.2 V1 prep** — API surface snapshot + CI gate (`scripts/check-api-surface.sh`); doc-health ledger (`docs/doc-health.md`); README API list polished to cover all 151 public fns; example consumer at `docs/examples/basic_consumer.cyr` exercising the surface end-to-end (stand-in until daimon/argonaut consume directly)
-- [x] **0.9.3 P(-1) hardening** — first audit report at `docs/audit/2026-05-10-audit.md`; F-1/F-2/F-3/F-4/F-5/F-8 boundary-validation fixes against the 2024-2026 CVE landscape; tests 303/0 (was 274/0)
-- [x] **0.9.4 P(-1) follow-up** — F-7 Unicode quarantine bypass (`_aegis_valid_agent_id` applied to quarantine API; `### Breaking` contract change) + F-9 sentinel-audit annotations (`_AEGIS_SERDE_INVALID` named constant); tests 322/0 (was 303/0)
-- [x] **0.9.5 audit close-out** — F-6 TOCTOU fixed via openat-style refactor (`open(O_NOFOLLOW)+fstat+close`; second `### Breaking`); all 9 audit findings now closed; tests 326/0 (was 322/0)
-- [ ] **1.0.0 release** — clean review/audit before cut; no new deliverables
+Each item is non-blocking — v1.0 ships without it. Pulled forward when a
+real consumer surfaces the requirement, when an upstream stdlib change
+lands, or when a P(-1) follow-up cycle batches them.
 
-## Shipped milestones
+### Consumer integration
 
-| Version | Theme | Date |
-|---------|-------|------|
-| **0.5.0** | First cyrius release — full Rust→Cyrius surface parity | 2026-05-08 |
-| **0.6.0** | Cleanup + real UUIDs (rust-old removed; agnostik `agent_id_new`) | 2026-05-08 |
-| **0.7.0** | Sakshi-full structured logging (spans + logfmt on 10 entry points) | 2026-05-08 |
-| **0.8.0** | JSON serde for the full record surface | 2026-05-08 |
-| **0.8.1** | Ring-buffer events log (`aegis_report_event` ~220 µs → 4 µs avg) | 2026-05-08 |
-| **0.8.2** | Polish — fuzz harness, ADRs, `bench-history.csv`, `scripts/audit.sh` | 2026-05-08 |
-| **0.8.3** | Toolchain + dep refresh: cyrius `5.10.0` → `5.10.34`, agnostik `1.0.0` → `1.2.1`, `lib/` gitignored, versioned CI toolchain layout | 2026-05-10 |
-| **0.9.0** | Nein firewall integration — `aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host` against nein 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` actions become real | 2026-05-10 |
-| **0.9.1** | Rust scaffold retired — `docs/reference/firewall.rs.ref` and supporting guidance fully removed | 2026-05-10 |
-| **0.9.2** | V1 prep — API surface CI gate, doc-health ledger, README API polish, example consumer | 2026-05-10 |
-| **0.9.3** | P(-1) hardening — first audit report; F-1..F-5 + F-8 boundary fixes; tests 274 → 303 | 2026-05-10 |
-| **0.9.4** | P(-1) follow-up — F-7 quarantine-API whitelist (`### Breaking`) + F-9 sentinel annotations; tests 303 → 322 | 2026-05-10 |
-| **0.9.5** | Audit close-out — F-6 scanner refuses symlinks (`### Breaking`); all 9 findings closed; tests 322 → 326 | 2026-05-10 |
+- **Real downstream consumer end-to-end**: daimon or argonaut consuming
+  `src/lib.cyr` in production, including a quarantine path that calls
+  `aegis_isolate_agent` and applies the rendered ruleset. The
+  `docs/examples/basic_consumer.cyr` stand-in exercises the surface but
+  isn't a production consumer. When the real one lands, decide whether the
+  example stays as a teaching artifact or gets deprecated.
 
-## Upcoming milestones
+### Audit follow-ups (deeper fixes for items closed at the boundary in 0.9.x)
 
-### M10 — First stable (v1.0.0)
+- **F-8 deeper fix** — JSON parser depth cap belongs in `lib/json.cyr`
+  upstream (cyrius stdlib). Aegis ships an input-length cap as a partial
+  mitigation today (`AEGIS_JSON_MAX_BYTES = 262_144` at every
+  `*_from_json` seam). Tracked in `docs/audit/2026-05-10-audit.md` F-8.
+- **F-6 deeper fix** — pass open fd to consumer via `SecurityFinding` so
+  the consumer's action operates on the same inode aegis stat'd. Closes
+  the consumer-side TOCTOU window. Adds API surface, so it's a v1.x
+  feature held until a real consumer surfaces the requirement.
 
-Clean review / audit pass before the cut — no new deliverables. Confirms:
+### Stdlib migrations (currently shimmed locally)
 
-- Audit script green (every gate, zero warnings tolerated).
-- API surface snapshot matches `cyrius api-surface --scope=project`; no in-flight drift.
-- doc-health ledger has zero rows in the 🟡 stale bucket.
-- All 5 ADRs are still Accepted and the [`001-cyrius-port-gaps`](../architecture/001-cyrius-port-gaps.md) table has no rows still marked deferred.
-- Example consumer (`docs/examples/basic_consumer.cyr`) builds and runs.
+- **`O_NOFOLLOW` → `lib/syscalls_*_linux.cyr`**: defined locally as
+  `_AEGIS_O_NOFOLLOW = 131072` in `src/lib.cyr` with an upstream-this
+  comment. Single grep target. Land the constant in cyrius stdlib, then
+  swap the local for the global.
 
-Then: API freeze (additions non-breaking; removals / renames need a major bump), tag, push, ship.
+### Observability
 
-**Deferred to post-1.0 (not blockers for the cut):**
+- **Trace-ID propagation** (`sakshi_trace_set` for cross-process
+  correlation). Useful once a multi-process wire flow exists between
+  aegis and a consumer — currently aegis logs are single-daemon.
 
-- **Real downstream consumer integration** — daimon or argonaut consuming `src/lib.cyr` end-to-end. The 0.9.2 example covers the surface but isn't a real production consumer. Tracked as a v1.x point release.
-- **Trace-ID propagation** (`sakshi_trace_set` for cross-process correlation) — not useful until a multi-process wire flow exists between aegis and a consumer.
-- **`scripts/bench.sh` to auto-append `bench-history.csv`** — nice-to-have; can land in any v1.x patch.
+### Tooling
+
+- **`scripts/bench.sh`** — auto-append `bench-history.csv` after each
+  bench run. Currently hand-maintained; not a blocker for any release.
+
+## What this file is NOT
+
+- Not a CHANGELOG (that's [`../../CHANGELOG.md`](../../CHANGELOG.md)).
+- Not a state snapshot (that's [`state.md`](state.md)).
+- Not a v1.0 sign-off checklist — that ran during the 1.0.0 cut and
+  passed; the verification record is in CHANGELOG `[1.0.0] § Verified at sign-off`.
+
+When a v1.x or v2.0 milestone is being planned, add a section above with
+the scope and a few load-bearing requirements. Don't pre-populate empty
+buckets ("Future") — those rot. Add work items here only when they're
+concrete enough to act on.

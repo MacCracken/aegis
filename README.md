@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.9.0** — nein firewall integration. `src/firewall.cyr` ships three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) plus render/validate wrappers against [nein](https://github.com/MacCracken/nein) 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions now generate real nftables rulesets instead of being placeholder enum values. Carries forward 0.8.3's toolchain refresh (cyrius `5.10.34`, agnostik `1.2.1`, gitignored `lib/`), 0.8.2's fuzz harness + audit script, 0.8.1's ring-buffer events log (`aegis_report_event` ≈ 4 µs avg at 50k iter), 0.8.0's JSON serde, 0.7.0's sakshi-full structured logging. **274 passed / 0 failed** across 79 test groups. The rust scaffold the cyrius port mirrored is fully removed.
+**1.0.0** — first stable. The 151-fn public API surface at [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot) is the SemVer-stable contract; additions are non-breaking, removals or renames need a major bump. Ships the full surface built across 0.5.0 → 0.9.5: nein firewall integration (`aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host` + render/validate wrappers), JSON serde for all 8 records, sakshi-full structured logging, fixed-cap ring-buffer events log (`aegis_report_event` ≈ 4 µs avg at 50k iter), boundary-validated API (whitelist on `agent_id` + `agent_addr`; clamps on JSON-deserialized config; no-follow-symlink scanner). All 9 P(-1) audit findings closed — see [`docs/audit/2026-05-10-audit.md`](docs/audit/2026-05-10-audit.md). **326 passed / 0 failed** across 92 test groups + 1000-iter fuzz on every JSON parser.
 
 ## Quick Start
 
@@ -63,7 +63,7 @@ Ring primitive (events log; cap captured at `aegis_new` time — see [ADR 0005](
 
 JSON serde — every record gains `<name>_to_json` / `<name>_from_json` (rendered) plus `<name>_to_json_v` / `<name>_from_json_v` (typed-value tree). Wire format is consumed by daimon / argonaut; field names are snake_case and enum variants are PascalCase.
 
-The full machine-checkable surface (151 public fns at the 0.9.2 baseline) lives at [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot); CI gates additions/removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh).
+The full machine-checkable surface (151 public fns — the v1.0 SemVer-stable contract) lives at [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot); CI gates additions/removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh).
 
 ## Project Layout
 

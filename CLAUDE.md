@@ -68,9 +68,9 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 
 ## Process
 
-### P(-1): Hardening (before features and at minor / v1.0 cuts)
+### P(-1): Hardening (before features and at minor cuts)
 
-Aegis ran the original P(-1) pass during 0.5–0.8.x; the next runs are paired with each minor cut and the pre-1.0.0 sweep.
+Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. Subsequent runs pair with each minor cut.
 
 1. **Cleanliness** — `./scripts/audit.sh` green; `cyrius lint`, `cyrius vet`, `cyrius fmt` clean.
 2. **Benchmark baseline** — `cyrius bench tests/aegis.bcyr`; append to `bench-history.csv`.
