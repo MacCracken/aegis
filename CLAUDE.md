@@ -46,7 +46,7 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 - Build with `cyrius build`, not raw `cat file | cc5` — the manifest auto-resolves deps.
 - Source files only need project includes — stdlib auto-resolves from `cyrius.cyml`.
 - `var buf[N]` = N **bytes**, not N entries. **Function-scope `var buf[N]` is static data** — consecutive calls share the backing memory; alloc on the heap if the buffer's contents need to outlive the call.
-- For deferred / post-parity work, see [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md). The frozen rust spec for the (still-deferred) firewall integration lives at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
+- For non-obvious cyrius-implementation constraints surfaced during the port, see [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md).
 
 ## Rules (Hard Constraints)
 
@@ -54,7 +54,6 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 - **Never use `gh` CLI** — use `curl` to the GitHub API if needed.
 - Do not skip tests before claiming changes work.
 - Do not modify `lib/` files (vendored stdlib / dep symlinks).
-- Do not modify `docs/reference/firewall.rs.ref` — it's the frozen rust spec for the deferred nein integration.
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth.
 
 ## Documentation

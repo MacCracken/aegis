@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-10
+
+**Rust scaffold fully retired.** With the firewall port shipped in 0.9.0, the last remaining piece of the original rust source — `docs/reference/firewall.rs.ref`, preserved through 0.5–0.8.x as the parity oracle for the deferred nein integration — is no longer load-bearing. This release deletes it along with the "do not modify the rust spec" guidance and the dangling references in CLAUDE.md / CONTRIBUTING.md / SECURITY.md / README.md / docs / inline comments. No source or behaviour change to the daemon library; tests still **274 passed / 0 failed**.
+
+### Removed
+
+- `docs/reference/firewall.rs.ref` — last file from the rust scaffold; preserved through 0.5–0.8.x as the parity oracle for nein integration. The cyrius port in 0.9.0 made it redundant.
+- `/rust-old/target/` from `.gitignore` — `rust-old/` itself was deleted in 0.6.0; the gitignore line had been stale since.
+- "Do not modify the frozen rust spec" rule in `CLAUDE.md`.
+- "Outstanding rust surface" callout in `README.md` (status paragraph also refreshed from 0.8.2 → 0.9.0); `docs/reference/` removed from the project-layout tree.
+- "Out of scope: firewall integration" bullet in `SECURITY.md` — no longer accurate since 0.9.0.
+- "`rust-old/src/lib.rs` is the parity oracle" guidance in `CONTRIBUTING.md`; cyrius pin reference bumped to `5.10.34`; `src/firewall.cyr` added to the "make your change in the right place" map.
+- `rust-old/` from the `docs/guides/getting-started.md` layout; "cross-check parity against rust-old/" step dropped.
+
+### Changed
+
+- `docs/architecture/cyrius-port-gaps.md` header note rewritten — the rust source is fully gone. The `nein` row updated from "deferred" to "done in 0.9.0".
+- `docs/development/state.md` — version line and source list refreshed; bullet for the deleted reference file dropped.
+- `src/firewall.cyr` header comment — removed the pointer at the deleted spec; replaced with a self-contained note that consumers (daimon) read the wire shape, so changes are breaking.
+- 5 inline `# Mirrors rust-old…` / `# matches … in rust-old/src/lib.rs` comments in `src/lib.cyr` rewritten to describe the behaviour without dangling at deleted paths.
+
 ## [0.9.0] — 2026-05-10
 
 **Nein firewall integration — `QA_ISOLATE` / `QA_RATELIMIT` are real now.** The deferred-since-0.5 firewall enforcement path lands as `src/firewall.cyr`, a faithful port of the frozen rust spec at `docs/reference/firewall.rs.ref`. nein dependency added at `[deps.nein]` = `1.5.0` (cyrius `5.10.34`). Three public builders + a render + validate wrapper; tests mirror the six `#[cfg(test)]` cases from the rust spec. Wire-level diffs against the rust output are zero (table-name prefixes `aegis_iso_` / `aegis_rl_` / `aegis_host` and rule comments preserved verbatim). Total tests: **274 passed / 0 failed** (was 256).

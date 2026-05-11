@@ -4,7 +4,7 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 
 ## Prerequisites
 
-- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (`5.10.0`+)
+- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (currently `5.10.34`)
 - Linux x86_64 for now; aarch64 cross-build is best-effort in CI
 
 ## Workflow
@@ -13,13 +13,14 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 2. Branch from `main`.
 3. Make your change in the right place:
    - Library types / daemon API → `src/lib.cyr`
+   - Firewall builders (nein integration) → `src/firewall.cyr`
    - Daemon entry → `src/main.cyr`
    - Tests → `tests/aegis.tcyr`
    - Benches → `tests/aegis.bcyr`
    - Fuzz → `tests/aegis.fcyr`
 4. Run the local checks (see "Commands" below).
 5. Update `CHANGELOG.md` under `[Unreleased]`. Performance claims need benchmark numbers; breaking changes get a `### Breaking` subsection.
-6. If you changed observable behavior vs. `rust-old/src/lib.rs`, justify it in the PR — the rust source is the parity oracle for everything except deliberate divergences (which need an ADR under `docs/adr/`).
+6. Behavioural divergences from the documented contract (records, daemon API, JSON wire format) need an ADR under `docs/adr/` — wire shape is consumed by daimon / argonaut.
 7. Open a PR. CI will run the same checks.
 
 ## Commands

@@ -8,7 +8,8 @@
 
 # ================================================================
 # ThreatLevel — five severities. Lower number = more severe, so
-# bare `<` matches the manual `Ord` impl in rust-old/src/lib.rs.
+# bare `<` reads as "more severe than" without a helper. See ADR
+# 0001 for the sentinel/ordering rationale.
 # ================================================================
 enum ThreatLevel {
     THREAT_CRITICAL = 0;
@@ -29,7 +30,8 @@ fn threat_level_label(t) {
 
 # ================================================================
 # SecurityEventType — category of a reported event.
-# Labels match serde's snake_case rendering in rust-old.
+# Labels are snake_case for wire compatibility with consumers
+# (daimon, argonaut) parsing the JSON event stream.
 # ================================================================
 enum SecurityEventType {
     EV_INTEGRITY_VIOLATION       = 0;
@@ -841,9 +843,9 @@ fn _aegis_stat_modesize(path_cstr, out) {
 
 # ================================================================
 # Scanning — agent binaries and package archives.
-# Mirrors rust-old's behaviour: respects config flags; missing /
-# empty / world-writable / oversized files surface as findings;
-# every result is appended to scan_history.
+# Respects config flags; missing / empty / world-writable /
+# oversized files surface as findings; every result is appended
+# to scan_history.
 # ================================================================
 fn aegis_scan_agent(d, agent_id_cstr, binary_path_cstr) {
     _aegis_span_enter("scan_agent");
@@ -1171,9 +1173,9 @@ fn _aegis_check_pg_socket(findings) {
 
 # Check database data-dir + socket integrity. Returns a vec of
 # findings; also records a scan in scan_history with target
-# "database-services". Mirrors rust-old: silent on nonexistent
-# dirs, flags world-accessible (mode & 0o007) data dirs as High,
-# flags world-writable PG socket as Medium when policy.check_socket_permissions.
+# "database-services". Silent on nonexistent dirs; flags world-
+# accessible (mode & 0o007) data dirs as High; flags world-
+# writable PG socket as Medium when policy.check_socket_permissions.
 fn aegis_check_database_integrity(d, policy) {
     _aegis_span_enter("check_database_integrity");
     var findings = _aegis_check_database_integrity_inner(d, policy);
@@ -1277,9 +1279,9 @@ fn _aegis_report_database_access_violation_inner(d, agent_id_cstr, database_cstr
 }
 
 # ================================================================
-# JSON serde — wire format compatible with rust-old's serde_json
-# rendering. Conventions:
-#   - Field names: snake_case, exactly as the rust struct fields.
+# JSON serde — wire format consumed by daimon / argonaut.
+# Conventions:
+#   - Field names: snake_case (matching the record-field naming).
 #   - Enum unit variants: PascalCase variant names (e.g.
 #     "Critical", "IntegrityViolation"). serde's default for unit
 #     variants without #[serde(rename_all = ...)].

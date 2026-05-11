@@ -1,15 +1,13 @@
 # Rust → Cyrius port — differences and gaps
 
-> Notes from doing the rust → cyrius port. Most of the rows below
-> are now historical (the port shipped in 0.5.0 and the post-parity
-> work landed across 0.6.0 – 0.8.2); kept here as an
-> implementation-constraint reference for new contributors and as
-> the canonical place to record cyrius-stdlib gotchas surfaced
-> during the port.
->
-> The rust source is gone — only [`docs/reference/firewall.rs.ref`](../reference/firewall.rs.ref)
-> survives, frozen as the spec for the deferred nein integration.
-> Decision rationale lives in [`../adr/`](../adr/).
+> Notes from doing the rust → cyrius port. The rows below are
+> historical — the port shipped in 0.5.0, the post-parity work
+> landed across 0.6.0 – 0.8.2, and the firewall integration that
+> blocked on nein landed in 0.9.0. The rust source is fully gone.
+> Kept as an implementation-constraint reference for new
+> contributors and as the canonical place to record cyrius-stdlib
+> gotchas surfaced during the port. Decision rationale lives in
+> [`../adr/`](../adr/).
 
 ## Dependency map
 
@@ -19,7 +17,7 @@
 | `serde` + `serde_json` | `lib/json.cyr` typed-value tree API (`json_v_obj_new`, `json_v_str_new`, `json_v_int_new`, `json_v_bool_new`, `json_v_arr_new`, `json_v_obj_set`, `json_v_arr_push`, `json_v_parse`, `json_v_build`). | **done in 0.8.0**. All 8 records gain `*_to_json` / `*_from_json` plus enum `*_serde` / `*_from_serde` (PascalCase variant names). Wire format mirrors rust-old's serde_json output: snake_case field names, RFC 3339 timestamps, nested objects/arrays, `null` for `Option::None`. **Caveat to remember:** `json_v_obj_set` takes a `Str` key but `json_v_obj_get` takes a **cstr** — passing `str_from(...)` to obj_get silently misses every field (strlen walks the Str struct as garbage). |
 | `tracing` (`info!`/`warn!`/`debug!` + spans) | `lib/sakshi.cyr` (full v2.2.3 bundle — used directly, **not** via `lib/log.cyr`) | **done in 0.7.0**. Spans wrap 10 mutating daemon entry points; logfmt `key=value` messages via `_aegis_log_emit_{info,warn,debug}` + `_aegis_log_kv_*` helpers. Trampoline pattern keeps the span stack balanced across all early-return paths. Spans gated below `SK_INFO` so tests/benches at `SK_ERROR` stay silent. Note: sakshi v2.2.3's actual severity scale is `SK_FATAL=0, SK_ERROR=1, SK_WARN=2, SK_INFO=3, SK_DEBUG=4, SK_TRACE=5` — `lib/log.cyr`'s mapping comment is stale for this version. |
 | `uuid` (`Uuid::new_v4`) | **agnostik** v1.0.0 `src/types.cyr` — `agent_id_new()` returns a 16-byte v4 UUID buffer (getrandom + `/dev/urandom` fallback, version/variant nibbles set, audit-reviewed Apr 2026). | **done in 0.6.0**. `[deps.agnostik]` declared in `cyrius.cyml`; `aegis_next_id` calls `agent_id_new()` and renders via the local `_aegis_uuid_to_string(buf16)` helper (heap-allocated 37-byte buffer per call, 8-4-4-4-12 hyphenated lowercase hex). |
-| `nein` (firewall feature) | `~/Repos/nein` cyrius port v1.0.0 — pinned to **cyrius 4.5.0**, ~5 minor versions stale | **deferred.** Wait until nein bumps to a modern cyrius pin before porting `rust-old/src/firewall.rs`. Until then: `firewall.rs` stays in `rust-old/` as the spec, no cyrius equivalent shipped, no `[deps.nein]` in the manifest, no firewall module in `src/`. The aegis daemon ships without quarantine-via-firewall enforcement until that lands. |
+| `nein` (firewall feature) | nein v1.5.0 (cyrius 5.10.34) — `dist/nein.cyr` bundle pulled via `[deps.nein]` | **done in 0.9.0.** `src/firewall.cyr` ports the rust scaffold's `firewall.rs` to cyrius — three public builders (`aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host`) plus `aegis_firewall_render` / `aegis_firewall_validate` wrappers. Tests assert the wire shape (table-name prefixes `aegis_iso_` / `aegis_rl_` / `aegis_host` and rule comments) clause-by-clause. `QA_ISOLATE` / `QA_RATELIMIT` actions are no longer placeholder enum values. |
 | `tempfile` (dev-dep) | none | gap — tests use a manual `/tmp/aegis_test_<pid>_<n>` scratch helper |
 
 ## Type-by-type translation

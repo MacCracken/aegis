@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**0.8.2** — polish bucket. Real fuzz harness (1000 random + curated inputs across all 8 JSON parsers), 5 ADRs in [`docs/adr/`](docs/adr/), `bench-history.csv` baseline, [`scripts/audit.sh`](scripts/audit.sh) mirroring the CI gates locally. Carries forward the 0.8.1 ring-buffer perf (`aegis_report_event` ≈ 4 µs avg at 50k iter), 0.8.0 JSON serde for the full record surface, 0.7.0 sakshi-full structured logging. **256 passed / 0 failed** across 73 test groups. Network-layer enforcement (firewall integration via [nein](https://github.com/MacCracken/nein)) is deferred until nein bumps its language pin to a current Cyrius release; the rust spec is preserved at [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref).
+**0.9.0** — nein firewall integration. `src/firewall.cyr` ships three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) plus render/validate wrappers against [nein](https://github.com/MacCracken/nein) 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions now generate real nftables rulesets instead of being placeholder enum values. Carries forward 0.8.3's toolchain refresh (cyrius `5.10.34`, agnostik `1.2.1`, gitignored `lib/`), 0.8.2's fuzz harness + audit script, 0.8.1's ring-buffer events log (`aegis_report_event` ≈ 4 µs avg at 50k iter), 0.8.0's JSON serde, 0.7.0's sakshi-full structured logging. **274 passed / 0 failed** across 79 test groups. The rust scaffold the cyrius port mirrored is fully removed.
 
 ## Quick Start
 
@@ -57,30 +57,28 @@ Daemon API (cstrs for `agent_id` / `event_id` / path parameters):
 ```
 src/
   lib.cyr        — library surface (records, accessors, daemon API)
+  firewall.cyr   — nein firewall builders for QA_ISOLATE / QA_RATELIMIT
   main.cyr       — daemon entry point
 tests/
   aegis.tcyr     — test suite (cyrius test)
   aegis.bcyr     — benchmarks
   aegis.fcyr     — fuzz harness
 docs/
-  architecture/  — non-obvious constraints (Rust → Cyrius port gaps)
+  architecture/  — non-obvious constraints (cyrius-stdlib gotchas surfaced during the port)
   development/   — state.md (live), roadmap.md
   adr/           — Architectural Decision Records
   guides/        — task-oriented how-tos
-  reference/     — frozen reference material (firewall.rs.ref — pending nein modernisation)
 ```
 
 ## Documentation
 
 - [`docs/development/state.md`](docs/development/state.md) — live project state (refreshed every release).
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0; remaining work for 0.9.0 / 1.0.0.
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0; remaining work toward 1.0.0.
 - [`docs/adr/`](docs/adr/) — Architectural Decision Records (sentinels, cstr API boundary, integer-array threat counts, hashmap flavor, ring buffer).
 - [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md) — non-obvious cyrius-implementation constraints found during the rust → cyrius port.
 - [`bench-history.csv`](bench-history.csv) — perf baseline tracked across versions.
 
 **Local audit**: [`./scripts/audit.sh`](scripts/audit.sh) runs every CI gate one-shot — use before pushing.
-
-The only outstanding rust surface is [`docs/reference/firewall.rs.ref`](docs/reference/firewall.rs.ref), pending [nein](https://github.com/MacCracken/nein)'s language-version bump.
 
 ## License
 

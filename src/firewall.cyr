@@ -2,13 +2,12 @@
 #
 # Translates QuarantineAction values (QA_ISOLATE, QA_RATELIMIT) and
 # the baseline host posture into nein Firewall rulesets. The returned
-# fw pointer renders to nftables source via firewall_render(fw); the
-# consumer (daimon) is responsible for applying it.
+# fw pointer renders to nftables source via aegis_firewall_render(fw);
+# the consumer (daimon) is responsible for applying it.
 #
-# Frozen rust spec lives at docs/reference/firewall.rs.ref — keep
-# table-name prefixes (aegis_iso_, aegis_rl_, aegis_host) and rule
-# comments in sync so wire-level diffs against the rust output stay
-# zero. Tests in tests/aegis.tcyr mirror the rust #[cfg(test)] cases.
+# Wire shape (table-name prefixes aegis_iso_, aegis_rl_, aegis_host
+# and rule comments) is consumed by daimon — treat any change as
+# breaking and bump accordingly.
 
 # ----------------------------------------------------------------
 # Helpers — build the per-agent table name "aegis_<prefix>_<id>"

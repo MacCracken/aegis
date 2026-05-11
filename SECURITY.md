@@ -39,5 +39,4 @@ We will acknowledge within 72 hours and aim to ship a fix within 14 days for Hig
 
 ## Out of Scope
 
-- Network enforcement (firewall integration via `nein`) — not yet in cyrius. The frozen rust spec at `docs/reference/firewall.rs.ref` is the parity oracle for that work; the cyrius port lands when nein modernises its language pin.
 - Cryptographic primitives — aegis enforces policy, **not** cryptography. All crypto belongs in [sigil](https://github.com/MacCracken/sigil).

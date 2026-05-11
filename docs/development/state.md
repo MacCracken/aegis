@@ -7,7 +7,7 @@
 
 ## Version
 
-**0.9.0** — nein firewall integration (2026-05-10). The deferred-since-0.5 firewall enforcement path lands as `src/firewall.cyr`: faithful port of `docs/reference/firewall.rs.ref` against nein 1.5.0, three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) plus render + validate wrappers. Wire-level diffs against the rust spec are zero. Tests now **274 passed / 0 failed** (was 256). Carries forward 0.8.3's toolchain refresh, 0.8.2's fuzz + audit, 0.8.1's ring-buffer events log, 0.8.0's JSON serde.
+**0.9.1** — rust scaffold fully retired (2026-05-10). Doc-only patch: `docs/reference/firewall.rs.ref` (the last remaining piece of the original rust source, preserved as the parity oracle until the firewall port shipped in 0.9.0) is removed, along with the supporting "do not modify the rust spec" guidance in `CLAUDE.md` / `CONTRIBUTING.md` / `SECURITY.md` / README / docs / inline comments. No source or behaviour change. Tests still **274 passed / 0 failed**. Carries forward 0.9.0's nein firewall integration, 0.8.3's toolchain refresh, 0.8.2's fuzz + audit, 0.8.1's ring-buffer events log, 0.8.0's JSON serde.
 
 ## Toolchain
 
@@ -21,7 +21,6 @@
 - `src/lib.cyr` — core library: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points, fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
 - `src/firewall.cyr` — nein integration. Three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) + `aegis_firewall_render` / `aegis_firewall_validate` wrappers. Standalone surface — not coupled to `QuarantineEntry`; the rust spec keeps the same shape. Consumers (daimon) decide when to call the builder based on the `QuarantineAction` they read from the entry.
 - `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, prints `"aegis ready"`. Includes both `lib.cyr` and `firewall.cyr`.
-- `docs/reference/firewall.rs.ref` — frozen rust spec the firewall port mirrors. Read-only; do not modify.
 
 ## Tests / fuzz / bench
 

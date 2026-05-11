@@ -21,8 +21,6 @@ tarpaulin-report.*
 *.pem
 *.key
 
-# Cyrius port
-/rust-old/target/
 /build/
 
 # Vendored stdlib + dep modules — repopulated by `cyrius deps`
