@@ -2,7 +2,7 @@
 #
 # First-slice port: ThreatLevel, SecurityEventType, SecurityEvent record.
 # Records use byte-offset layouts documented in
-# docs/architecture/cyrius-port-gaps.md.
+# docs/architecture/001-cyrius-port-gaps.md.
 #
 # Stdlib auto-resolves from cyrius.cyml — no explicit `include` needed here.
 

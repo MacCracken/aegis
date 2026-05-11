@@ -22,12 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `README.md` — API list polished to cover all 151 public fns: added Firewall (nein integration) section, Ring primitive subsection (cross-ref'd to ADR 0005), JSON serde paragraph, pointer to the machine-checkable snapshot. Documentation index gains entries for `docs/doc-health.md` + `docs/examples/`.
-- `docs/development/roadmap.md` — V1 prep deliverables marked shipped under 0.9.2; M10 (1.0.0) reframed as "clean review/audit before cut" with a concrete sign-off checklist (audit green / snapshot matches / doc-health zero stale rows / ADRs Accepted / cyrius-port-gaps zero deferred / example builds). "Real downstream consumer integration" moved to deferred-post-1.0.
+- `docs/development/roadmap.md` — V1 prep deliverables marked shipped under 0.9.2; M10 (1.0.0) reframed as "clean review/audit before cut" with a concrete sign-off checklist (audit green / snapshot matches / doc-health zero stale rows / ADRs Accepted / `001-cyrius-port-gaps` zero deferred / example builds). "Real downstream consumer integration" moved to deferred-post-1.0.
 
 ### Notes
 
 - **Lint warnings: 0** on every source file — the v1-prep "address every warning" deliverable trivially holds at the 0.9.2 baseline (recorded in `doc-health.md`).
 - API freeze policy starts at 1.0.0: snapshot additions are non-breaking; removals or renames need a major bump.
+
+### Alignment with first-party standards
+
+- `docs/architecture/cyrius-port-gaps.md` renamed to **`docs/architecture/001-cyrius-port-gaps.md`** to follow the `NNN-kebab-case-title.md` convention from [first-party-documentation.md § Architecture Notes](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/first-party-documentation.md#architecture-notes). All references updated (`README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, ADR 0002 + 0005, `doc-health.md`, `roadmap.md`, `src/lib.cyr` header). `docs/architecture/README.md` index populated (was previously "Empty").
+- **`CLAUDE.md` rewritten to align with `example_claude.md`** — Genesis repo link added to Project Identity, new Scaffolding section (project ported via `cyrius port`; rust-old retired in 0.6.0; firewall.rs.ref retired in 0.9.1), new Process section with Hardening (P(-1)) / Work Loop / Closeout Pass shaped to aegis's actual cadence, "Read the genesis repo's CLAUDE.md first" added as a hard rule, ADR cross-refs added to Key Principles. Durable content preserved; no volatile state inlined.
 
 ## [0.9.1] — 2026-05-10
 
@@ -45,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `docs/architecture/cyrius-port-gaps.md` header note rewritten — the rust source is fully gone. The `nein` row updated from "deferred" to "done in 0.9.0".
+- `docs/architecture/001-cyrius-port-gaps.md` header note rewritten — the rust source is fully gone. The `nein` row updated from "deferred" to "done in 0.9.0".
 - `docs/development/state.md` — version line and source list refreshed; bullet for the deleted reference file dropped.
 - `src/firewall.cyr` header comment — removed the pointer at the deleted spec; replaced with a self-contained note that consumers (daimon) read the wire shape, so changes are breaking.
 - 5 inline `# Mirrors rust-old…` / `# matches … in rust-old/src/lib.rs` comments in `src/lib.cyr` rewritten to describe the behaviour without dangling at deleted paths.

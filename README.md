@@ -88,7 +88,7 @@ docs/
 - [`docs/development/state.md`](docs/development/state.md) — live project state (refreshed every release).
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0; remaining work toward 1.0.0.
 - [`docs/adr/`](docs/adr/) — Architectural Decision Records (sentinels, cstr API boundary, integer-array threat counts, hashmap flavor, ring buffer).
-- [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md) — non-obvious cyrius-implementation constraints found during the rust → cyrius port.
+- [`docs/architecture/001-cyrius-port-gaps.md`](docs/architecture/001-cyrius-port-gaps.md) — non-obvious cyrius-implementation constraints found during the rust → cyrius port.
 - [`docs/doc-health.md`](docs/doc-health.md) — living ledger of doc currency (fresh / stale / archived / open-question), refreshed when docs are touched.
 - [`docs/examples/`](docs/examples/) — runnable consumer examples.
 - [`bench-history.csv`](bench-history.csv) — perf baseline tracked across versions.

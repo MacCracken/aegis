@@ -50,7 +50,7 @@ struct ring {
 
 - **Positive** — `aegis_report_event` drops from ~220 µs to **4 µs avg at 50 k iter** (≈ 55× speedup). Push is O(1) regardless of cap. The events log no longer dominates the hot path. Bench reproducible — see [`tests/aegis.bcyr`](../../tests/aegis.bcyr) and `bench-history.csv`.
 - **Negative** — the ring allocates the full cap upfront: at the default `max_events = 10 000`, that's 80 KB pinned for the lifetime of the daemon. The prior vec scheme grew on demand. For embedded use cases lower `max_events` before `aegis_new`.
-- **Negative** — cap is fixed once construction completes. Resizing requires constructing a new daemon. Documented in [`docs/development/state.md`](../development/state.md) and [`docs/architecture/cyrius-port-gaps.md`](../architecture/cyrius-port-gaps.md). In practice `max_events` is a deployment-time tunable, not a runtime knob.
+- **Negative** — cap is fixed once construction completes. Resizing requires constructing a new daemon. Documented in [`docs/development/state.md`](../development/state.md) and [`docs/architecture/001-cyrius-port-gaps.md`](../architecture/001-cyrius-port-gaps.md). In practice `max_events` is a deployment-time tunable, not a runtime knob.
 - **Neutral** — observable behaviour preserved: same iteration order (oldest first), same drop-on-overflow semantics, same `aegis_total_events` answers. All 65 pre-0.8.1 tests pass unchanged.
 
 ## Alternatives considered

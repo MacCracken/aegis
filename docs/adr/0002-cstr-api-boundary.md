@@ -10,7 +10,7 @@ Cyrius has two string conventions in active use across stdlib and ecosystem:
 - **C-string (cstr)** — null-terminated `char*`. What string literals lower to (`"hello"`). What `lib/string.cyr`'s `streq`/`strlen` operate on. What `lib/hashmap.cyr`'s `map_new()` keys are (cstr-keyed maps dispatch to `hash_str`/`streq` internally). What `lib/json.cyr`'s `json_v_obj_get(obj, key)` takes for the lookup arg.
 - **Str (fat pointer)** — 16-byte `{data: ptr, len: i64}` heap-allocated record. What `lib/str.cyr` operates on. What `lib/json.cyr`'s `json_v_obj_set(obj, key, val)` stores as the key.
 
-These are not interchangeable. Mixing them silently misbehaves: a `map_new_str()` map fed a cstr key reads the cstr's bytes as a Str struct via `load64` — segfault or random key-mismatch ([cyrius-port-gaps.md](../architecture/cyrius-port-gaps.md)). Worse: `json_v_obj_get(obj, str_from(...))` treats the Str as a cstr; `strlen` walks the struct bytes as if they were chars, returns garbage length, every field lookup misses (hit during 0.8.0).
+These are not interchangeable. Mixing them silently misbehaves: a `map_new_str()` map fed a cstr key reads the cstr's bytes as a Str struct via `load64` — segfault or random key-mismatch ([001-cyrius-port-gaps.md](../architecture/001-cyrius-port-gaps.md)). Worse: `json_v_obj_get(obj, str_from(...))` treats the Str as a cstr; `strlen` walks the struct bytes as if they were chars, returns garbage length, every field lookup misses (hit during 0.8.0).
 
 aegis crosses both worlds: tests pass `"agent-x"` literals; storage on records carries `Str*` for length-cheap comparisons; hashmap keys are agent_id cstrs.
 

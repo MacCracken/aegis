@@ -39,7 +39,7 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 ## Style & Constraints
 
 - **Cstrs at API boundaries.** Every daemon entry point that takes an `agent_id` / `event_id` / path takes a cstr. Internal storage on records is `Str*` (fat pointer). Wrap with `str_from(cstr)` when storing; unwrap with `str_data(s)` when comparing/keying maps.
-- **Cstr-keyed maps use `map_new()`. Str-keyed use `map_new_str()`. They are not interchangeable** — feeding a cstr to a `map_new_str()` map segfaults silently. See `docs/architecture/cyrius-port-gaps.md`.
+- **Cstr-keyed maps use `map_new()`. Str-keyed use `map_new_str()`. They are not interchangeable** — feeding a cstr to a `map_new_str()` map segfaults silently. See `docs/architecture/001-cyrius-port-gaps.md`.
 - **Records are byte-offset layouts.** Document the offsets in the comment above the constructor.
 - **Sentinels**: `0` for None / absent pointer; `-1` for None on i64 timestamps where 0 is a valid value (e.g. `auto_release_timeout_secs`).
 - **No `vec_remove(v, 0)` loops.** Drain-the-front is O(n²); rebuild a new vec with the kept suffix instead (see `_aegis_prune_events`).

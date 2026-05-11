@@ -6,4 +6,6 @@ Not decisions (those live in [`../adr/`](../adr/)) and not guides (those live in
 
 ## Items
 
-_Empty. Add a numbered entry (`001-kebab-case-title.md`) the first time the code has a non-obvious invariant a reader can't derive. Do not write entries for decisions — those are ADRs._
+| # | File | Affects | One-line hook |
+|---|------|---------|---------------|
+| 001 | [`001-cyrius-port-gaps.md`](001-cyrius-port-gaps.md) | every `src/` module — stdlib quirks, type translations, behavioral divergences | Cyrius-stdlib gotchas surfaced during the rust → cyrius port; per-row Status column tracks what's covered vs. deferred. |

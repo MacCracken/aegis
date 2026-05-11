@@ -45,7 +45,7 @@ Clean review / audit pass before the cut — no new deliverables. Confirms:
 - Audit script green (every gate, zero warnings tolerated).
 - API surface snapshot matches `cyrius api-surface --scope=project`; no in-flight drift.
 - doc-health ledger has zero rows in the 🟡 stale bucket.
-- All 5 ADRs are still Accepted and the cyrius-port-gaps table has no rows still marked deferred.
+- All 5 ADRs are still Accepted and the [`001-cyrius-port-gaps`](../architecture/001-cyrius-port-gaps.md) table has no rows still marked deferred.
 - Example consumer (`docs/examples/basic_consumer.cyr`) builds and runs.
 
 Then: API freeze (additions non-breaking; removals / renames need a major bump), tag, push, ship.

@@ -21,7 +21,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh — touched in 0.8.3 → 0.9.2 cycle** | 13 | `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md` (out-of-scope bullet trimmed in 0.9.1), `state.md`, `roadmap.md`, `cyrius-port-gaps.md` (nein row updated 0.9.0; rust-source-gone note refreshed 0.9.1), `getting-started.md` (rust-old refs dropped 0.9.1), `doc-health.md` (this file — new in 0.9.2), `api-surface-1.0.snapshot` (new in 0.9.2 — gates CI), the 5 ADRs (Accepted, all stable). |
+| ✅ **Fresh — touched in 0.8.3 → 0.9.2 cycle** | 13 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` (refreshed in 0.9.2 alignment pass — Genesis link, Scaffolding note, Process section), `CONTRIBUTING.md`, `SECURITY.md` (out-of-scope bullet trimmed in 0.9.1), `state.md`, `roadmap.md`, `001-cyrius-port-gaps.md` (renamed to NNN convention in 0.9.2; nein row updated 0.9.0; rust-source-gone note refreshed 0.9.1), `getting-started.md` (rust-old refs dropped 0.9.1), `doc-health.md` (this file — new in 0.9.2), `api-surface-1.0.snapshot` (new in 0.9.2 — gates CI), the 5 ADRs (Accepted, all stable). |
 | 🟡 **Stale — refresh in place** | 0 | None outstanding after the 0.8.3 → 0.9.2 sweep closed every dangling rust-spec / rust-old reference. |
 | 🔵 **Probably evergreen** | 3 | `CODE_OF_CONDUCT.md`, `LICENSE`, `docs/adr/template.md`. No version-tied claims. Re-read pass annually (or when the ADR pattern changes). |
 | 📦 **Archive / frozen by design** | 2 | `docs/adr/README.md` + `docs/architecture/README.md` are tier index pages — frozen until a new file lands in the relevant tier. |
@@ -31,7 +31,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 - ✅ `state.md` — refreshed every release; carries VERSION cell, cyrius pin, dep tags, build sizes, test count, source layout.
 - ✅ `roadmap.md` — 0.8.3 / 0.9.0 / 0.9.1 milestones added; v1-prep folded into 0.9.2; 1.0.0 reframed as "audit-only sign-off cut".
 - ✅ `CHANGELOG.md` — entries through 0.9.2.
-- ✅ `cyrius-port-gaps.md` — header note rewritten (rust source fully gone in 0.9.1); the `nein` row now reads "done in 0.9.0".
+- ✅ `001-cyrius-port-gaps.md` — header note rewritten (rust source fully gone in 0.9.1); the `nein` row now reads "done in 0.9.0". Renamed in 0.9.2 to follow the `NNN-` numbering convention from first-party-documentation.md; `architecture/README.md` index populated.
 - ✅ `README.md` — status block refreshed 0.8.2 → 0.9.2 across the 0.9.0/0.9.1/0.9.2 cuts; firewall surface section added to the API list (0.9.2); project-layout drops `docs/reference/`.
 - ✅ `api-surface-1.0.snapshot` (new) — committed in 0.9.2 as the 1.0 baseline; CI gate `scripts/check-api-surface.sh` fails on unannounced public-fn additions or removals. 151 fns at 0.9.2 baseline (146 lib + 5 firewall).
 
@@ -66,7 +66,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `cyrius-port-gaps.md` | 2026-05-10 | ✅ Fresh | Cyrius-stdlib gotchas surfaced during the rust → cyrius port; per-row Status column tracks what's covered vs. deferred. Header note refreshed 0.9.1 (rust source fully gone); nein row refreshed 0.9.0 (done). |
+| `001-cyrius-port-gaps.md` | 2026-05-10 | ✅ Fresh | Cyrius-stdlib gotchas surfaced during the rust → cyrius port; per-row Status column tracks what's covered vs. deferred. Header note refreshed 0.9.1 (rust source fully gone); nein row refreshed 0.9.0 (done). Renamed from `cyrius-port-gaps.md` in 0.9.2 to follow `NNN-` convention. |
 | `README.md` | 2026-04-30 | 📦 Tier index | Frozen until a second file lands in `architecture/`. |
 
 ---
