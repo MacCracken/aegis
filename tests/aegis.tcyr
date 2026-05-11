@@ -1033,6 +1033,14 @@ fn main() {
     test_firewall_rate_limit_validates();
     test_firewall_hardened_host_renders();
     test_firewall_hardened_host_validates();
+    # 0.9.3 P(-1) hardening tests
+    test_p1_max_events_clamped();
+    test_p1_auto_release_timeout_clamped();
+    test_p1_periodic_interval_clamped();
+    test_p1_firewall_rejects_bad_agent_id();
+    test_p1_firewall_rejects_bad_agent_addr();
+    test_p1_firewall_accepts_good_input();
+    test_p1_json_oversize_rejected();
     return assert_summary();
 }
 
@@ -1096,6 +1104,153 @@ fn test_firewall_hardened_host_validates() {
     test_group("firewall_hardened_host_validates");
     var fw = aegis_hardened_host();
     assert_eq(aegis_firewall_validate(fw), 0, "hardened-host firewall validates");
+    return 0;
+}
+
+# ================================================================
+# 0.9.3 P(-1) hardening tests — see docs/audit/2026-05-10-audit.md.
+# Each test maps to a finding (F-1..F-5, F-8); F-2 + F-3 share the
+# firewall-builder validators.
+# ================================================================
+
+# F-1: max_events clamp on JSON deserialization (and the setter).
+fn test_p1_max_events_clamped() {
+    test_group("p1_max_events_clamped");
+    # Above hard cap → clamped to AEGIS_MAX_EVENTS_HARD_CAP.
+    # First confirm parsing returns non-null for a tiny valid input.
+    var c0 = aegis_config_from_json(str_from("{\"max_events\":42}"));
+    assert_neq(c0, 0, "tiny config parse returns non-null");
+    assert_eq(aegis_config_max_events(c0), 42,
+    "small max_events round-trips");
+    # Above hard cap (1M) → clamped.
+    var c = aegis_config_from_json(str_from("{\"max_events\":5000000}"));
+    assert_neq(c, 0, "above-cap config parse returns non-null");
+    assert_eq(aegis_config_max_events(c), AEGIS_MAX_EVENTS_HARD_CAP,
+    "above-cap max_events clamped to hard cap");
+    # Negative or zero → default (10000).
+    var c2 = aegis_config_from_json(str_from("{\"max_events\":-1}"));
+    assert_eq(aegis_config_max_events(c2), 10000,
+    "negative max_events → default");
+    # Setter clamp (defense-in-depth).
+    var c3 = aegis_config_default();
+    aegis_config_set_max_events(c3, 5000000);
+    assert_eq(aegis_config_max_events(c3), AEGIS_MAX_EVENTS_HARD_CAP,
+    "setter clamp also fires");
+    return 0;
+}
+
+# F-4: auto_release_timeout_secs — only -1 sentinel or [0, hard cap].
+fn test_p1_auto_release_timeout_clamped() {
+    test_group("p1_auto_release_timeout_clamped");
+    # Negative non-sentinel → AEGIS_AUTO_RELEASE_NONE (default).
+    var c = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":-86400}"));
+    assert_eq(aegis_config_auto_release_timeout_secs(c), AEGIS_AUTO_RELEASE_NONE,
+    "negative non-sentinel timeout → AUTO_RELEASE_NONE");
+    # -1 sentinel preserved.
+    var c2 = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":-1}"));
+    assert_eq(aegis_config_auto_release_timeout_secs(c2), AEGIS_AUTO_RELEASE_NONE,
+    "-1 sentinel preserved");
+    # Above hard cap → clamped.
+    var c3 = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":50000000}"));
+    assert_eq(aegis_config_auto_release_timeout_secs(c3), AEGIS_TIMEOUT_HARD_CAP,
+    "huge timeout clamped to TIMEOUT_HARD_CAP");
+    return 0;
+}
+
+# F-5: periodic_scan_interval_secs — [0, hard cap].
+fn test_p1_periodic_interval_clamped() {
+    test_group("p1_periodic_interval_clamped");
+    var c = aegis_config_from_json(str_from("{\"periodic_scan_interval_secs\":-1}"));
+    assert_eq(aegis_config_periodic_scan_interval_secs(c), 0,
+    "negative interval → 0");
+    var c2 = aegis_config_from_json(str_from("{\"periodic_scan_interval_secs\":50000000}"));
+    assert_eq(aegis_config_periodic_scan_interval_secs(c2), AEGIS_TIMEOUT_HARD_CAP,
+    "huge interval clamped to TIMEOUT_HARD_CAP");
+    return 0;
+}
+
+# F-2: firewall builders reject bad agent_id (nftables identifier injection).
+fn test_p1_firewall_rejects_bad_agent_id() {
+    test_group("p1_firewall_rejects_bad_agent_id");
+    # Newline injection (iptables-save comment write-primitive class).
+    assert_eq(aegis_isolate_agent("bad\nname", "10.0.0.1"), 0,
+    "agent_id with newline rejected");
+    # Semicolon (token break).
+    assert_eq(aegis_isolate_agent("bad;drop", "10.0.0.1"), 0,
+    "agent_id with semicolon rejected");
+    # Empty.
+    assert_eq(aegis_isolate_agent("", "10.0.0.1"), 0,
+    "empty agent_id rejected");
+    # Over-length (55 chars exceeds 54 cap).
+    assert_eq(aegis_isolate_agent("a234567890123456789012345678901234567890123456789012345", "10.0.0.1"), 0,
+    "over-length agent_id rejected");
+    # Brace.
+    assert_eq(aegis_rate_limit_agent("agent{}", "10.0.0.1", 100), 0,
+    "agent_id with brace rejected (rate-limit path)");
+    return 0;
+}
+
+# F-3: firewall builders reject bad agent_addr (match-value injection).
+fn test_p1_firewall_rejects_bad_agent_addr() {
+    test_group("p1_firewall_rejects_bad_agent_addr");
+    # Newline injection.
+    assert_eq(aegis_isolate_agent("agent-1", "10.0.0.1\ndrop"), 0,
+    "agent_addr with newline rejected");
+    # Space.
+    assert_eq(aegis_isolate_agent("agent-1", "10.0.0.1 drop"), 0,
+    "agent_addr with space rejected");
+    # Empty.
+    assert_eq(aegis_isolate_agent("agent-1", ""), 0,
+    "empty agent_addr rejected");
+    # rate_limit also enforces pps > 0.
+    assert_eq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 0), 0,
+    "rate_limit with pps=0 rejected");
+    assert_eq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 0 - 1), 0,
+    "rate_limit with negative pps rejected");
+    return 0;
+}
+
+# F-2/F-3: confirm valid input still produces non-zero firewall (regression
+# guard for the validator swallowing legitimate input).
+fn test_p1_firewall_accepts_good_input() {
+    test_group("p1_firewall_accepts_good_input");
+    assert_neq(aegis_isolate_agent("agent-1", "10.0.0.1"), 0,
+    "valid IPv4 isolate accepted");
+    assert_neq(aegis_isolate_agent("a.b_c-1", "10.0.0.1/24"), 0,
+    "valid mixed-id + CIDR accepted");
+    assert_neq(aegis_isolate_agent("agent-1", "fe80::1"), 0,
+    "valid IPv6 accepted");
+    assert_neq(aegis_isolate_agent("agent-1", "fe80::1/128"), 0,
+    "valid IPv6/128 accepted");
+    assert_neq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 100), 0,
+    "valid rate_limit accepted");
+    return 0;
+}
+
+# F-8: JSON input-length cap at the aegis deserialization seams.
+fn test_p1_json_oversize_rejected() {
+    test_group("p1_json_oversize_rejected");
+    # Build a string longer than AEGIS_JSON_MAX_BYTES (256 KB).
+    # Use vec_push of a single byte 300_000 times — bigger than the cap.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"id\":\"");
+    var pad = str_builder_new();
+    var i = 0;
+    while (i < 300000) {
+        str_builder_add_cstr(pad, "x");
+        i = i + 1;
+    }
+    var pad_str = str_builder_build(pad);
+    str_builder_add(sb, pad_str);
+    str_builder_add_cstr(sb, "\"}");
+    var huge = str_builder_build(sb);
+    # Each of the 8 record parsers should reject without crashing.
+    assert_eq(security_event_from_json(str_data(huge)), 0,
+    "oversize JSON rejected by security_event_from_json");
+    assert_eq(quarantine_entry_from_json(str_data(huge)), 0,
+    "oversize JSON rejected by quarantine_entry_from_json");
+    assert_eq(aegis_config_from_json(str_data(huge)), 0,
+    "oversize JSON rejected by aegis_config_from_json");
     return 0;
 }
 

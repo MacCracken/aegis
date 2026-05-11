@@ -21,7 +21,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh — touched in 0.8.3 → 0.9.2 cycle** | 13 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` (refreshed in 0.9.2 alignment pass — Genesis link, Scaffolding note, Process section), `CONTRIBUTING.md`, `SECURITY.md` (out-of-scope bullet trimmed in 0.9.1), `state.md`, `roadmap.md`, `001-cyrius-port-gaps.md` (renamed to NNN convention in 0.9.2; nein row updated 0.9.0; rust-source-gone note refreshed 0.9.1), `getting-started.md` (rust-old refs dropped 0.9.1), `doc-health.md` (this file — new in 0.9.2), `api-surface-1.0.snapshot` (new in 0.9.2 — gates CI), the 5 ADRs (Accepted, all stable). |
+| ✅ **Fresh — touched in 0.8.3 → 0.9.3 cycle** | 14 | `README.md`, `CHANGELOG.md`, `CLAUDE.md` (refreshed in 0.9.2 alignment pass), `CONTRIBUTING.md`, `SECURITY.md` (out-of-scope bullet trimmed in 0.9.1), `state.md`, `roadmap.md`, `001-cyrius-port-gaps.md` (renamed to NNN convention in 0.9.2), `getting-started.md` (rust-old refs dropped 0.9.1), `doc-health.md` (this file — new in 0.9.2), `api-surface-1.0.snapshot` (new in 0.9.2 — gates CI), `audit/2026-05-10-audit.md` (new in 0.9.3 — first P(-1) audit report), the 5 ADRs (Accepted, all stable). |
 | 🟡 **Stale — refresh in place** | 0 | None outstanding after the 0.8.3 → 0.9.2 sweep closed every dangling rust-spec / rust-old reference. |
 | 🔵 **Probably evergreen** | 3 | `CODE_OF_CONDUCT.md`, `LICENSE`, `docs/adr/template.md`. No version-tied claims. Re-read pass annually (or when the ADR pattern changes). |
 | 📦 **Archive / frozen by design** | 2 | `docs/adr/README.md` + `docs/architecture/README.md` are tier index pages — frozen until a new file lands in the relevant tier. |
@@ -93,6 +93,16 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 |---|---|---|---|
 | `docs/guides/getting-started.md` | 2026-05-10 | ✅ Fresh | Build / layout / add-a-feature flow. rust-old references dropped 0.9.1; `src/firewall.cyr` added to layout. |
 | `docs/examples/basic_consumer.cyr` | 2026-05-10 | ✅ Fresh | Stand-in downstream consumer (new in 0.9.2). Exercises the public surface end-to-end: aegis_new → report critical event → quarantine → firewall builder → render → validate. Builds clean. Not a real daimon, but proves nothing essential is private-by-accident. |
+
+## Tier 6 — Audit reports (`docs/audit/`)
+
+Date-stamped, frozen by design. Each P(-1) hardening pass per CLAUDE.md cadence lands a new report — old reports stay verbatim as the historical record.
+
+| File | Date | Status | Notes |
+|---|---|---|---|
+| `2026-05-10-audit.md` | 2026-05-10 | ✅ Fresh | First P(-1) audit (paired with 0.9.3 cut). 9 findings: F-1/F-2/F-3/F-4/F-5/F-8 fixed in 0.9.3; F-6 (TOCTOU) / F-7 (Unicode quarantine bypass) / F-9 (sentinel audit) deferred to 0.9.4 with concrete plans. CVE landscape research 2024-2026 (Wazuh, osquery, ESET, VMware, Tomcat, Jackson, Spring, Android KEV). |
+
+Next audit slot: at v1.0.0 sign-off cut (or sooner if a CVE pattern surfaces in nein, the cyrius json stdlib, or the agnostik UUID surface).
 
 ---
 

@@ -230,6 +230,45 @@ fn event_set_resolved(e, v) { store64(e + 64, v); return 0; }
 var AEGIS_CONFIG_SIZE = 56;
 var AEGIS_AUTO_RELEASE_NONE = 0 - 1;
 
+# P(-1) hardening (0.9.3): bound config values that flow to alloc / arithmetic.
+# Caps enforced at JSON deserialization (aegis_config_from_json_v) AND at the
+# setters as defense-in-depth. See docs/audit/2026-05-10-audit.md F-1, F-4, F-5.
+#
+# AEGIS_MAX_EVENTS_HARD_CAP — bounds aegis_ring_new(cap*8) heap alloc to 8 MB.
+#   Prevents CWE-770 DoS via attacker-controlled JSON. 1M slots is well past
+#   any realistic deployment (default is 10000); going above this means the
+#   ring should probably be scan_history's job instead.
+# AEGIS_TIMEOUT_HARD_CAP — bounds auto_release_timeout_secs and
+#   periodic_scan_interval_secs. 1 year of seconds. Prevents CWE-690 sentinel
+#   collisions on negative input and pathological-arithmetic on huge input.
+var AEGIS_MAX_EVENTS_HARD_CAP = 1000000;
+var AEGIS_TIMEOUT_HARD_CAP    = 31536000;
+
+# Clamp helpers — used at the JSON-deserialization seam and at the setters.
+# v < 0 → return default (negatives have no semantic here other than the
+#         AEGIS_AUTO_RELEASE_NONE sentinel, which has its own helper).
+# v > cap → cap.
+fn _aegis_clamp_max_events(v) {
+    if (v <= 0)                           { return 10000; }
+    if (v > AEGIS_MAX_EVENTS_HARD_CAP)    { return AEGIS_MAX_EVENTS_HARD_CAP; }
+    return v;
+}
+
+fn _aegis_clamp_interval_secs(v) {
+    if (v < 0)                          { return 0; }
+    if (v > AEGIS_TIMEOUT_HARD_CAP)     { return AEGIS_TIMEOUT_HARD_CAP; }
+    return v;
+}
+
+# auto_release_timeout_secs has the -1 sentinel for None. Anything else
+# negative is invalid → default (sentinel). Positives clamp to TIMEOUT cap.
+fn _aegis_clamp_auto_release_timeout(v) {
+    if (v == AEGIS_AUTO_RELEASE_NONE)   { return v; }
+    if (v < 0)                          { return AEGIS_AUTO_RELEASE_NONE; }
+    if (v > AEGIS_TIMEOUT_HARD_CAP)     { return AEGIS_TIMEOUT_HARD_CAP; }
+    return v;
+}
+
 fn aegis_config_default() {
     var c = alloc(AEGIS_CONFIG_SIZE);
     store64(c + 0,  1);
@@ -252,11 +291,23 @@ fn aegis_config_auto_release_timeout_secs(c)   { return load64(c + 48); }
 
 fn aegis_config_set_scan_on_install(c, v)             { store64(c + 0,  v); return 0; }
 fn aegis_config_set_scan_on_execute(c, v)             { store64(c + 8,  v); return 0; }
-fn aegis_config_set_periodic_scan_interval_secs(c, v) { store64(c + 16, v); return 0; }
-fn aegis_config_set_quarantine_on_critical(c, v)      { store64(c + 24, v); return 0; }
-fn aegis_config_set_quarantine_on_high(c, v)          { store64(c + 32, v); return 0; }
-fn aegis_config_set_max_events(c, v)                  { store64(c + 40, v); return 0; }
-fn aegis_config_set_auto_release_timeout_secs(c, v)   { store64(c + 48, v); return 0; }
+fn aegis_config_set_quarantine_on_critical(c, v) { store64(c + 24, v); return 0; }
+fn aegis_config_set_quarantine_on_high(c, v)     { store64(c + 32, v); return 0; }
+
+# 0.9.3 P(-1): setters with clamps. Defense-in-depth — the JSON
+# deserializer also clamps, so direct setter callers can't bypass.
+fn aegis_config_set_periodic_scan_interval_secs(c, v) {
+    store64(c + 16, _aegis_clamp_interval_secs(v));
+    return 0;
+}
+fn aegis_config_set_max_events(c, v) {
+    store64(c + 40, _aegis_clamp_max_events(v));
+    return 0;
+}
+fn aegis_config_set_auto_release_timeout_secs(c, v) {
+    store64(c + 48, _aegis_clamp_auto_release_timeout(v));
+    return 0;
+}
 
 # ================================================================
 # Ring buffer — fixed-capacity FIFO with O(1) push and
@@ -1439,6 +1490,25 @@ fn _aegis_jv_get_bool(obj, key_cstr) {
     return json_v_bool(v);
 }
 
+# P(-1) hardening (0.9.3): hard cap on JSON input length at every aegis
+# *_from_json seam. Partial mitigation for the depth-exhaustion DoS class
+# (CVE-2025-52999 Jackson, CVE-2024-57699 json-smart, CVE-2024-21907
+# Newtonsoft, CVE-2024-34155 Go) — lib/json.cyr is recursive and lacks
+# its own depth cap today. 256 KB bounds worst-case nesting at ~131K nodes
+# (depth-N requires ≥ 2N bytes); a real depth cap upstream is tracked for
+# 0.9.5. See docs/audit/2026-05-10-audit.md F-8.
+var AEGIS_JSON_MAX_BYTES = 262144;
+
+# Returns 1 if json_str (Str*) is small enough to parse; 0 otherwise.
+# Note: aegis *_from_json contract takes a Str* (fat pointer), not a cstr —
+# matches lib/json.cyr's json_v_parse signature. Use str_len, not strlen.
+# Callers translate 0 to "parse failure" (return 0 from *_from_json).
+fn _aegis_json_size_ok(json_str) {
+    if (json_str == 0) { return 0; }
+    if (str_len(json_str) > AEGIS_JSON_MAX_BYTES) { return 0; }
+    return 1;
+}
+
 # ---------- KernelTuningRecommendation ---------------------------
 
 fn ktr_to_json_v(k) {
@@ -1463,7 +1533,10 @@ fn ktr_from_json_v(v) {
     return ktr_new(p, r, why);
 }
 
-fn ktr_from_json(json_str) { return ktr_from_json_v(json_v_parse(json_str)); }
+fn ktr_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return ktr_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- SecurityFinding -------------------------------------
 
@@ -1496,7 +1569,10 @@ fn finding_from_json_v(v) {
     return finding_new(sev, cat, desc, rec);
 }
 
-fn finding_from_json(json_str) { return finding_from_json_v(json_v_parse(json_str)); }
+fn finding_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return finding_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- SecurityScanResult ----------------------------------
 
@@ -1556,7 +1632,10 @@ fn scan_result_from_json_v(v) {
     return r;
 }
 
-fn scan_result_from_json(json_str) { return scan_result_from_json_v(json_v_parse(json_str)); }
+fn scan_result_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return scan_result_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- AegisConfig -----------------------------------------
 
@@ -1585,20 +1664,25 @@ fn aegis_config_from_json_v(v) {
     var c = alloc(AEGIS_CONFIG_SIZE);
     store64(c + 0,  _aegis_jv_get_bool(v, "scan_on_install"));
     store64(c + 8,  _aegis_jv_get_bool(v, "scan_on_execute"));
-    store64(c + 16, _aegis_jv_get_int(v,  "periodic_scan_interval_secs"));
+    # 0.9.3 P(-1): clamp ints from the wire — F-1 (max_events DoS),
+    # F-4 (auto_release_timeout sentinel collision), F-5 (interval bounds).
+    store64(c + 16, _aegis_clamp_interval_secs(_aegis_jv_get_int(v, "periodic_scan_interval_secs")));
     store64(c + 24, _aegis_jv_get_bool(v, "quarantine_on_critical"));
     store64(c + 32, _aegis_jv_get_bool(v, "quarantine_on_high"));
-    store64(c + 40, _aegis_jv_get_int(v,  "max_events"));
+    store64(c + 40, _aegis_clamp_max_events(_aegis_jv_get_int(v, "max_events")));
     var arv = json_v_obj_get(v, "auto_release_timeout_secs");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
-        if (json_v_is_int(arv) == 1) { ar = json_v_int(arv); }
+        if (json_v_is_int(arv) == 1) { ar = _aegis_clamp_auto_release_timeout(json_v_int(arv)); }
     }
     store64(c + 48, ar);
     return c;
 }
 
-fn aegis_config_from_json(json_str) { return aegis_config_from_json_v(json_v_parse(json_str)); }
+fn aegis_config_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return aegis_config_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- DatabaseSecurityPolicy ------------------------------
 
@@ -1653,7 +1737,10 @@ fn dbpolicy_from_json_v(v) {
     return p;
 }
 
-fn dbpolicy_from_json(json_str) { return dbpolicy_from_json_v(json_v_parse(json_str)); }
+fn dbpolicy_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return dbpolicy_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- AegisStats ------------------------------------------
 
@@ -1701,7 +1788,10 @@ fn aegis_stats_from_json_v(v) {
     return s;
 }
 
-fn aegis_stats_from_json(json_str) { return aegis_stats_from_json_v(json_v_parse(json_str)); }
+fn aegis_stats_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return aegis_stats_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- QuarantineEntry -------------------------------------
 
@@ -1779,7 +1869,10 @@ fn quarantine_entry_from_json_v(v) {
     return entry;
 }
 
-fn quarantine_entry_from_json(json_str) { return quarantine_entry_from_json_v(json_v_parse(json_str)); }
+fn quarantine_entry_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return quarantine_entry_from_json_v(json_v_parse(json_str));
+}
 
 # ---------- SecurityEvent ---------------------------------------
 
@@ -1878,4 +1971,7 @@ fn security_event_from_json_v(v) {
     return e;
 }
 
-fn security_event_from_json(json_str) { return security_event_from_json_v(json_v_parse(json_str)); }
+fn security_event_from_json(json_str) {
+    if (_aegis_json_size_ok(json_str) == 0) { return 0; }
+    return security_event_from_json_v(json_v_parse(json_str));
+}

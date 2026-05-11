@@ -7,7 +7,7 @@
 
 ## Version
 
-**0.9.2** — V1 prep + first-party standards alignment, last release before the 1.0.0 cut (2026-05-10). Adds the API-surface CI gate (`scripts/check-api-surface.sh` + `docs/development/api-surface-1.0.snapshot` baseline of 151 public fns), the doc-health ledger (`docs/doc-health.md` modelled on agnosys's), the polished README API list, and an end-to-end example consumer (`docs/examples/basic_consumer.cyr`). Also aligns the project to first-party standards: `docs/architecture/cyrius-port-gaps.md` → `001-cyrius-port-gaps.md` per the `NNN-` convention; `CLAUDE.md` rewritten to match `example_claude.md` (Genesis link, Scaffolding section, Process section with Hardening / Work Loop / Closeout Pass, "read genesis CLAUDE.md first" rule). 0 lint warnings across the codebase; tests still **274 passed / 0 failed**. After this release, 1.0.0 is a clean review/audit pass with no new functionality. Carries forward 0.9.1's rust-scaffold retirement, 0.9.0's nein firewall integration, 0.8.3's toolchain refresh, 0.8.2's fuzz + audit, 0.8.1's ring-buffer events log, 0.8.0's JSON serde.
+**0.9.3** — P(-1) hardening pass (2026-05-10). Six security-class fixes (F-1 max_events DoS clamp, F-2 nftables identifier injection via agent_id, F-3 match-value injection via agent_addr, F-4/F-5 timeout/interval bounds, F-8 JSON input-length cap) closed at the API boundary against the 2024-2026 CVE landscape (Wazuh, osquery, ESET, VMware, Tomcat, Jackson, Spring, Android KEV). Three findings deferred to 0.9.4 with concrete plans (F-6 TOCTOU + symlink follow, F-7 Unicode quarantine bypass, F-9 sentinel audit). Full report: [`docs/audit/2026-05-10-audit.md`](../audit/2026-05-10-audit.md). Tests **303 passed / 0 failed** (was 274; +7 groups +29 assertions). API surface unchanged (151 public fns; all new helpers are `_aegis_*` private). After this release, 0.9.4 closes F-6/F-7/F-9; 1.0.0 is the sign-off cut with no new functionality. Carries forward 0.9.2's V1 prep + first-party-standards alignment, 0.9.1's rust-scaffold retirement, 0.9.0's nein firewall integration.
 
 ## Toolchain
 
@@ -26,7 +26,7 @@
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **274 passed / 0 failed** across 79 test groups (6 new firewall groups in 0.9.0). |
+| `tests/aegis.tcyr` | **303 passed / 0 failed** across 86 test groups (6 firewall groups added in 0.9.0; 7 P(-1)-hardening groups added in 0.9.3). |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
 | `tests/aegis.bcyr` | 3 benches: `aegis_next_id` ≈ 2 µs, `security_event_new` ≈ 3 µs, `aegis_report_event` ≈ 4 µs (avg, 50–100k iter). History in [`bench-history.csv`](../../bench-history.csv). |
 

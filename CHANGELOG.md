@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-05-10
+
+**P(-1) hardening pass — boundary validation against the 2024-2026 CVE landscape.** Six security-class fixes (F-1, F-2, F-3, F-4, F-5, F-8) closed at the API boundary. Three findings (F-6 TOCTOU, F-7 Unicode quarantine bypass, F-9 sentinel audit) deferred to 0.9.4 with concrete plans. Full audit report at [`docs/audit/2026-05-10-audit.md`](docs/audit/2026-05-10-audit.md). Tests **303 passed / 0 failed** (was 274; +7 new test groups, +29 new assertions). API surface unchanged (151 public fns) — all new helpers are `_aegis_*` private.
+
+### Security
+
+- **F-1 (MEDIUM, CWE-770)** — Unbounded `max_events` from JSON deserialization could request arbitrary heap alloc via `aegis_ring_new(cap*8)`. **Fixed**: `AEGIS_MAX_EVENTS_HARD_CAP = 1_000_000` (8 MB ring upper bound) clamp at JSON deserialization AND at `aegis_config_set_max_events` setter (defense-in-depth).
+- **F-2 (HIGH, CWE-77)** — `aegis_isolate_agent` / `aegis_rate_limit_agent` interpolated `agent_id` into nftables table names + rule comments without validation. nein's `validate_identifier` only fired at `firewall_validate` time, after the firewall was built. **Fixed**: `_aegis_valid_agent_id` whitelist `^[a-zA-Z0-9_.-]{1,54}$` at the firewall builder seam — categorically rejects iptables-save comment-injection class (Shielder 2024) and every Unicode confusable / zero-width / control codepoint (CVE-2024-43093 class). Builders return `0` (null fw) on invalid input.
+- **F-3 (HIGH, CWE-77)** — Same builders accepted `agent_addr` raw; nein doesn't validate the addr format. **Fixed**: `_aegis_valid_agent_addr` shape validator (`[0-9a-fA-F:./]`, length 1..43) at the seam. Rejects every nftables-injection vector (whitespace, braces, semicolons, newlines, quotes, comment markers). Typed parse + canonical re-emit deferred to 0.9.5.
+- **F-4 (LOW, CWE-690)** — `auto_release_timeout_secs` from JSON accepted negatives other than the `-1` sentinel → past epoch + immediate auto-release on next `aegis_check_auto_releases`. **Fixed**: clamp to `{-1} ∪ [0, AEGIS_TIMEOUT_HARD_CAP]` (1 year of seconds).
+- **F-5 (LOW)** — `periodic_scan_interval_secs` unbounded. **Fixed**: clamp to `[0, AEGIS_TIMEOUT_HARD_CAP]`.
+- **F-8 (HIGH, CWE-674, partial fix)** — `lib/json.cyr`'s typed-value parser is recursive without a depth cap; deeply nested input could exhaust the stack (CVE-2025-52999 Jackson class). **Partial fix**: 256 KB input-length cap (`AEGIS_JSON_MAX_BYTES = 262_144`) at all 8 `*_from_json` seams bounds worst-case nesting at ~131K nodes, well past stack-exhaustion territory. A real depth cap upstream in `lib/json.cyr` (suggest 32 — record nesting in aegis is shallow) tracked for 0.9.5.
+
+### Deferred to 0.9.4 (concrete plans, not skipped)
+
+- **F-6 (HIGH, CWE-367)** — TOCTOU + symlink follow in scanner. `_aegis_stat_modesize` uses `sys_stat` (follows symlinks); the canonical anti-pattern from CVE-2025-2425 (ESET) / CVE-2025-22224 (VMware) / CVE-2024-50379 (Tomcat). 0.9.4 cheap fix: switch to `sys_lstat`, surface symlinks as findings rather than silently following. 0.9.5 deeper fix: rework around `sys_open(O_NOFOLLOW|O_CLOEXEC) → sys_fstat(fd)`. Why deferred: needs symlink test plumbing + new syscall surface.
+- **F-7 (MEDIUM)** — Unicode-normalization quarantine bypass. The cstr-keyed quarantine map does byte-for-byte comparison; an attacker can use case variants, U+2011 hyphens, zero-width inserts, RTL overrides to register multiple "different" agents (CVE-2024-43093 class). 0.9.3 firewall-path validators block this on the firewall side (whitelist is ASCII-only); the in-memory quarantine map remains exposed. 0.9.4 fix: reuse `_aegis_valid_agent_id` on `aegis_quarantine_agent` / `aegis_release_agent` / `aegis_is_quarantined` / `aegis_get_quarantine` / `security_event_new`. Why deferred: API-contract change (existing consumers may pass weird IDs); needs `### Breaking` migration note.
+- **F-9 (MEDIUM, CWE-690)** — Sentinel audit pass. ADR 0001 documented per-field `-1` / `0` / `QA_NONE` choices; risk is preventive — future fields added without going through the ADR may collide. 0.9.4: annotate every sentinel use with classification, re-evaluate at v1.0 freeze.
+
+### Added
+
+- `docs/audit/` directory + first audit report at `2026-05-10-audit.md` — 9 findings, severity-tagged, with concrete remediation per finding and `What aegis got right` section recording load-bearing audit-clean properties.
+- `_aegis_valid_agent_id` / `_aegis_valid_agent_addr` validators in `src/firewall.cyr`.
+- `_aegis_clamp_max_events` / `_aegis_clamp_interval_secs` / `_aegis_clamp_auto_release_timeout` / `_aegis_json_size_ok` helpers in `src/lib.cyr`.
+- 7 new test groups in `tests/aegis.tcyr` covering each of the 6 fixes (F-2/F-3 share validators so + a regression-guard "valid input still accepted" group): **+29 assertions**, total **303 passed / 0 failed**.
+
+### Verification
+
+- `scripts/audit.sh` green end-to-end.
+- API surface snapshot unchanged at 151 public fns (helpers are private; no contract change).
+- `scripts/check-api-surface.sh`: `ok: 151 public fns, surface matches snapshot exactly`.
+
 ## [0.9.2] — 2026-05-10
 
 **V1 prep — last work before the 1.0.0 cut.** Lands the four remaining v1 deliverables that don't require external consumers to ship: an API-surface CI gate, a doc-health ledger, a polished README API list, and an example consumer that exercises the public surface end-to-end. After this, 1.0.0 is a clean review/audit pass — no new functionality.
