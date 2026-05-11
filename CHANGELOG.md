@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-05-10
+
+**V1 prep — last work before the 1.0.0 cut.** Lands the four remaining v1 deliverables that don't require external consumers to ship: an API-surface CI gate, a doc-health ledger, a polished README API list, and an example consumer that exercises the public surface end-to-end. After this, 1.0.0 is a clean review/audit pass — no new functionality.
+
+### Added
+
+- **`scripts/check-api-surface.sh`** — thin wrapper around `cyrius api-surface --scope=project --snapshot=...`. Pattern lifted from agnosys; the cyrius CLI does the heavy lifting. Usage: `./scripts/check-api-surface.sh` (diff vs. committed snapshot) or `--update` (regenerate after intentional surface changes). Exits non-zero on drift.
+- **`docs/development/api-surface-1.0.snapshot`** — committed v1.0 baseline. **151 public fns** across 2 modules: 146 in `lib`, 5 in `firewall`. CI gate fails on unannounced additions/removals.
+- New CI step **API surface (drift gate)** in `.github/workflows/ci.yml`, between Vet and Build. Same gate added to `scripts/audit.sh` so local audits catch drift before push.
+- **`docs/doc-health.md`** — living ledger of doc currency. Tier the 18-file aegis surface (6 root + 12 under `docs/`) into fresh / stale / read-through / evergreen / archive / open-question buckets. Refreshed in place when docs are touched. Pattern lifted from `agnosys/docs/doc-health.md`, right-sized for aegis's smaller surface.
+- **`docs/examples/basic_consumer.cyr`** — small standalone consumer (~60 LOC) that exercises the public surface end-to-end: `aegis_new` → report a Critical event → auto-quarantine triggers → `aegis_isolate_agent` builds the firewall → `aegis_firewall_render` + `aegis_firewall_validate`. Builds with `cyrius build`; prints a one-line summary on success. Stand-in for the v1 deliverable "one downstream consumer green" until daimon / argonaut land — proves nothing essential is private-by-accident.
+
+### Changed
+
+- `README.md` — API list polished to cover all 151 public fns: added Firewall (nein integration) section, Ring primitive subsection (cross-ref'd to ADR 0005), JSON serde paragraph, pointer to the machine-checkable snapshot. Documentation index gains entries for `docs/doc-health.md` + `docs/examples/`.
+- `docs/development/roadmap.md` — V1 prep deliverables marked shipped under 0.9.2; M10 (1.0.0) reframed as "clean review/audit before cut" with a concrete sign-off checklist (audit green / snapshot matches / doc-health zero stale rows / ADRs Accepted / cyrius-port-gaps zero deferred / example builds). "Real downstream consumer integration" moved to deferred-post-1.0.
+
+### Notes
+
+- **Lint warnings: 0** on every source file — the v1-prep "address every warning" deliverable trivially holds at the 0.9.2 baseline (recorded in `doc-health.md`).
+- API freeze policy starts at 1.0.0: snapshot additions are non-breaking; removals or renames need a major bump.
+
 ## [0.9.1] — 2026-05-10
 
 **Rust scaffold fully retired.** With the firewall port shipped in 0.9.0, the last remaining piece of the original rust source — `docs/reference/firewall.rs.ref`, preserved through 0.5–0.8.x as the parity oracle for the deferred nein integration — is no longer load-bearing. This release deletes it along with the "do not modify the rust spec" guidance and the dangling references in CLAUDE.md / CONTRIBUTING.md / SECURITY.md / README.md / docs / inline comments. No source or behaviour change to the daemon library; tests still **274 passed / 0 failed**.

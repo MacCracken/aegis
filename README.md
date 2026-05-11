@@ -44,13 +44,26 @@ Enums (integer constants — see `src/lib.cyr`):
 
 Daemon API (cstrs for `agent_id` / `event_id` / path parameters):
 
-- Construction & event reporting: `aegis_new`, `aegis_report_event`
+- Construction & event reporting: `aegis_new`, `aegis_next_id`, `aegis_report_event`
 - Event queries: `aegis_recent_events`, `aegis_events_for_agent`, `aegis_events_by_threat`, `aegis_unresolved_events`, `aegis_resolve_event`
 - Threat counting: `aegis_threat_count`, `aegis_total_events`, `aegis_unresolved_count`
 - Quarantine: `aegis_quarantine_agent`, `aegis_release_agent`, `aegis_is_quarantined`, `aegis_get_quarantine`, `aegis_quarantined_agents`, `aegis_check_auto_releases`
 - Scanning: `aegis_scan_agent`, `aegis_scan_package`
 - Database surface: `aegis_check_database_integrity`, `aegis_audit_ddl_operation`, `aegis_report_database_access_violation`, `aegis_database_kernel_recommendations`
 - Stats: `aegis_stats`
+
+Firewall (nein integration — `src/firewall.cyr`, exercised via `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions):
+
+- Builders: `aegis_isolate_agent(agent_id, agent_addr)`, `aegis_rate_limit_agent(agent_id, agent_addr, pps)`, `aegis_hardened_host()`
+- Wrappers: `aegis_firewall_render(fw)` returns `Str*` (nftables source); `aegis_firewall_validate(fw)` returns `0` (ok) / `1` (invalid)
+
+Ring primitive (events log; cap captured at `aegis_new` time — see [ADR 0005](docs/adr/0005-fixed-cap-ring-buffer-events-log.md)):
+
+- `aegis_ring_new`, `aegis_ring_push`, `aegis_ring_get`, `aegis_ring_len`, `aegis_ring_cap`
+
+JSON serde — every record gains `<name>_to_json` / `<name>_from_json` (rendered) plus `<name>_to_json_v` / `<name>_from_json_v` (typed-value tree). Wire format is consumed by daimon / argonaut; field names are snake_case and enum variants are PascalCase.
+
+The full machine-checkable surface (151 public fns at the 0.9.2 baseline) lives at [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot); CI gates additions/removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh).
 
 ## Project Layout
 
@@ -76,6 +89,8 @@ docs/
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones through v1.0; remaining work toward 1.0.0.
 - [`docs/adr/`](docs/adr/) — Architectural Decision Records (sentinels, cstr API boundary, integer-array threat counts, hashmap flavor, ring buffer).
 - [`docs/architecture/cyrius-port-gaps.md`](docs/architecture/cyrius-port-gaps.md) — non-obvious cyrius-implementation constraints found during the rust → cyrius port.
+- [`docs/doc-health.md`](docs/doc-health.md) — living ledger of doc currency (fresh / stale / archived / open-question), refreshed when docs are touched.
+- [`docs/examples/`](docs/examples/) — runnable consumer examples.
 - [`bench-history.csv`](bench-history.csv) — perf baseline tracked across versions.
 
 **Local audit**: [`./scripts/audit.sh`](scripts/audit.sh) runs every CI gate one-shot — use before pushing.

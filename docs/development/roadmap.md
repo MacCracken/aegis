@@ -17,8 +17,9 @@
 - [x] `bench-history.csv` baseline so perf regressions surface
 - [x] ADRs for every load-bearing design decision (sentinels, cstr API, hashmap flavor, ring buffer)
 - [x] **0.9.0 nein firewall integration** — `aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host` via nein 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` are no longer placeholder actions
-- [ ] **0.10.x V1 prep** — API surface snapshot + freeze, full audit, doc polish, one downstream consumer green
-- [ ] **1.0.0 release** — first stable
+- [x] **0.9.1 rust scaffold retired** — `docs/reference/firewall.rs.ref` deleted; supporting "do not modify the rust spec" guidance removed across CLAUDE.md / CONTRIBUTING.md / SECURITY.md / README.md / docs / inline comments
+- [x] **0.9.2 V1 prep** — API surface snapshot + CI gate (`scripts/check-api-surface.sh`); doc-health ledger (`docs/doc-health.md`); README API list polished to cover all 151 public fns; example consumer at `docs/examples/basic_consumer.cyr` exercising the surface end-to-end (stand-in until daimon/argonaut consume directly)
+- [ ] **1.0.0 release** — clean review/audit before cut; no new deliverables
 
 ## Shipped milestones
 
@@ -32,24 +33,25 @@
 | **0.8.2** | Polish — fuzz harness, ADRs, `bench-history.csv`, `scripts/audit.sh` | 2026-05-08 |
 | **0.8.3** | Toolchain + dep refresh: cyrius `5.10.0` → `5.10.34`, agnostik `1.0.0` → `1.2.1`, `lib/` gitignored, versioned CI toolchain layout | 2026-05-10 |
 | **0.9.0** | Nein firewall integration — `aegis_isolate_agent` / `aegis_rate_limit_agent` / `aegis_hardened_host` against nein 1.5.0; `QA_ISOLATE` / `QA_RATELIMIT` actions become real | 2026-05-10 |
+| **0.9.1** | Rust scaffold retired — `docs/reference/firewall.rs.ref` and supporting guidance fully removed | 2026-05-10 |
+| **0.9.2** | V1 prep — API surface CI gate, doc-health ledger, README API polish, example consumer | 2026-05-10 |
 
 ## Upcoming milestones
 
-### M9 — V1 prep (v0.10.x)
-
-Stabilise. Goal: be in a state where v1.0 is a tag, not a slice of work. Originally planned as 0.9.0 but the API snapshot piece had no anchor without a load-bearing consumer surface — nein 0.9.0 lands the firewall builders, so the snapshot now describes real enforcement instead of placeholder enum-only behaviour.
-
-- Public-API-surface snapshot (`scripts/check-api-surface.sh` analogous to agnosys's): commit a frozen list of public fn names, gate CI to fail on unannounced removals.
-- Full audit pass — re-run `scripts/audit.sh`, address every warning even if currently below the failure threshold.
-- Documentation polish — every public daemon fn covered in either `README.md`'s API list or a guide; cross-references between ADRs and architecture notes complete.
-- One downstream consumer green (daimon or argonaut consuming `src/lib.cyr` end-to-end, including a quarantine path that calls `aegis_isolate_agent` and applies the rendered ruleset).
-
 ### M10 — First stable (v1.0.0)
 
-- API freeze. Public-fn additions are non-breaking; removals or renames need a major bump.
-- Tag, push, ship.
+Clean review / audit pass before the cut — no new deliverables. Confirms:
 
-**Out of scope for v1.0:**
+- Audit script green (every gate, zero warnings tolerated).
+- API surface snapshot matches `cyrius api-surface --scope=project`; no in-flight drift.
+- doc-health ledger has zero rows in the 🟡 stale bucket.
+- All 5 ADRs are still Accepted and the cyrius-port-gaps table has no rows still marked deferred.
+- Example consumer (`docs/examples/basic_consumer.cyr`) builds and runs.
 
+Then: API freeze (additions non-breaking; removals / renames need a major bump), tag, push, ship.
+
+**Deferred to post-1.0 (not blockers for the cut):**
+
+- **Real downstream consumer integration** — daimon or argonaut consuming `src/lib.cyr` end-to-end. The 0.9.2 example covers the surface but isn't a real production consumer. Tracked as a v1.x point release.
 - **Trace-ID propagation** (`sakshi_trace_set` for cross-process correlation) — not useful until a multi-process wire flow exists between aegis and a consumer.
 - **`scripts/bench.sh` to auto-append `bench-history.csv`** — nice-to-have; can land in any v1.x patch.

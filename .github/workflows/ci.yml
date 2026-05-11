@@ -107,6 +107,14 @@ jobs:
       - name: Vet (include-graph audit)
         run: cyrius vet src/main.cyr
 
+      - name: API surface (drift gate)
+        # Diffs the project-scoped public-fn surface against the
+        # committed snapshot at docs/development/api-surface-1.0.snapshot.
+        # Intentional API additions/renames regen via
+        # `scripts/check-api-surface.sh --update` and commit the new
+        # snapshot in the same PR. Pattern lifted from agnosys.
+        run: scripts/check-api-surface.sh
+
       - name: Build (DCE)
         run: |
           mkdir -p build

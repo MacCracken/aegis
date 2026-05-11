@@ -1,0 +1,76 @@
+# aegis — basic_consumer.cyr
+#
+# A small standalone consumer that exercises the public surface
+# end-to-end. Stand-in for the v1 deliverable "one downstream
+# consumer green" until daimon / argonaut land — proves nothing
+# essential is private-by-accident.
+#
+# Build + run:
+#   cyrius build docs/examples/basic_consumer.cyr build/basic_consumer
+#   ./build/basic_consumer
+#
+# Flow:
+#   1. Construct a daemon with default config.
+#   2. Report a Critical event for "agent-7" → triggers auto-quarantine.
+#   3. Confirm the agent is in the quarantine map.
+#   4. Build an isolation firewall for the agent's address.
+#   5. Render to nftables source + validate.
+#   6. Print a one-line summary; exit 0 on success.
+
+include "src/lib.cyr"
+include "src/firewall.cyr"
+
+fn main() {
+    alloc_init();
+    sakshi_set_level(SK_ERROR);
+
+    # 1. Daemon
+    var d = aegis_new(aegis_config_default());
+
+    # 2. Critical event — auto_quarantine_on_critical defaults true.
+    # security_event_new auto-generates the event id internally.
+    var ev = security_event_new(
+        EV_SANDBOX_ESCAPE,
+        "kernel-watcher",
+        "agent-7",
+        THREAT_CRITICAL,
+        "process broke out of seccomp jail"
+    );
+    var action = aegis_report_event(d, ev);
+
+    # 3. Quarantine should now contain agent-7
+    if (aegis_is_quarantined(d, "agent-7") != 1) {
+        println("FAIL: agent-7 not quarantined after Critical event");
+        return 1;
+    }
+
+    # 4. Isolation firewall for the agent
+    var fw = aegis_isolate_agent("agent-7", "10.20.30.40");
+
+    # 5. Render + validate
+    var rendered = aegis_firewall_render(fw);
+    if (aegis_firewall_validate(fw) != 0) {
+        println("FAIL: isolation firewall did not validate");
+        return 2;
+    }
+
+    # 6. Summary — confirms the wire shape that daimon would consume.
+    # NOTE: print(buf, len) is the unambiguous shape; println(cstr) loses
+    # the cstring vs i64 overload dispatch when fed `str_data(...)` (the
+    # i64 println_int variant wins and you get a decimal address printed).
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "basic_consumer ok: action=");
+    str_builder_add_cstr(sb, quarantine_action_label(action));
+    str_builder_add_cstr(sb, " events=");
+    str_builder_add_int(sb, aegis_total_events(d));
+    str_builder_add_cstr(sb, " ruleset_bytes=");
+    str_builder_add_int(sb, str_len(rendered));
+    str_builder_add_cstr(sb, "\n");
+    var msg = str_builder_build(sb);
+    print(str_data(msg), str_len(msg));
+
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

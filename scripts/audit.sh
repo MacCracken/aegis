@@ -54,6 +54,11 @@ gate "vet (include-graph audit)"
 cyrius vet src/main.cyr > /dev/null
 green "vet ok"
 
+gate "api surface (drift gate)"
+scripts/check-api-surface.sh | tail -1 | grep -q '^ok' \
+    || { red "api surface drift — regenerate via scripts/check-api-surface.sh --update"; exit 1; }
+green "api surface matches snapshot"
+
 gate "build (DCE)"
 mkdir -p build
 CYRIUS_DCE=1 cyrius build src/main.cyr build/aegis 2>&1 | tail -1
