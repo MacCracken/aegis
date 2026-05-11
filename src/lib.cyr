@@ -186,11 +186,18 @@ var SECURITY_EVENT_SIZE = 72;
 
 # `agent_id_cstr` may be 0 to mean None (Option::None). Otherwise
 # it's a null-terminated cstr that gets wrapped in a Str* for storage.
+# F-7 (0.9.4): non-null agent_id_cstr must pass the whitelist; an
+# invalid id forces the event to anonymous (aid stays 0). The event
+# is still recorded — silently dropping events would mask attack
+# attempts. The downstream auto-quarantine path then short-circuits
+# (no agent_id → no quarantine), which matches existing semantics.
 fn security_event_new(event_type, source_cstr, agent_id_cstr, threat_level, description_cstr) {
     var e = alloc(SECURITY_EVENT_SIZE);
     var aid_stored = 0;
-    if (agent_id_cstr != 0) {
-        aid_stored = str_from(agent_id_cstr);
+    if (_aegis_valid_agent_id_or_empty(agent_id_cstr) == 1) {
+        if (agent_id_cstr != 0) {
+            aid_stored = str_from(agent_id_cstr);
+        }
     }
     store64(e + 0,  aegis_next_id());
     store64(e + 8,  clock_epoch_secs());
@@ -667,7 +674,11 @@ fn _aegis_ensure_quarantine_map(d) {
 # Manual quarantine. If already quarantined: escalates threat if
 # more severe, appends "; reason" to existing reason. Returns the
 # entry pointer.
+# F-7 (0.9.4): boundary validation. Invalid agent_id → return 0 (no
+# quarantine entry). Categorically blocks Unicode-confusable / case-
+# variant / zero-width quarantine bypass class (CVE-2024-43093 family).
 fn aegis_quarantine_agent(d, agent_id_cstr, reason_cstr, threat_level) {
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
     _aegis_span_enter("quarantine_agent");
     var entry = _aegis_quarantine_agent_inner(d, agent_id_cstr, reason_cstr, threat_level);
     _aegis_span_exit();
@@ -703,7 +714,10 @@ fn _aegis_quarantine_agent_inner(d, agent_id_cstr, reason_cstr, threat_level) {
     return entry;
 }
 
+# F-7 (0.9.4): boundary validation. Invalid agent_id → return 0 (no
+# release performed) — matches the not-quarantined return path.
 fn aegis_release_agent(d, agent_id_cstr) {
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
     _aegis_span_enter("release_agent");
     var rc = _aegis_release_agent_inner(d, agent_id_cstr);
     _aegis_span_exit();
@@ -722,12 +736,18 @@ fn _aegis_release_agent_inner(d, agent_id_cstr) {
     return rc;
 }
 
+# F-7 (0.9.4): invalid agent_id → 0 (not quarantined), matches the
+# "key not in map" semantics — never inadvertently report a confusable
+# variant as quarantined when the canonical form isn't.
 fn aegis_is_quarantined(d, agent_id_cstr) {
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
     if (aegis_quarantine(d) == 0) { return 0; }
     return map_has(aegis_quarantine(d), agent_id_cstr);
 }
 
+# F-7 (0.9.4): boundary validation; mirrors aegis_is_quarantined.
 fn aegis_get_quarantine(d, agent_id_cstr) {
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
     if (aegis_quarantine(d) == 0) { return 0; }
     if (map_has(aegis_quarantine(d), agent_id_cstr) == 0) { return 0; }
     return map_get(aegis_quarantine(d), agent_id_cstr);
@@ -1358,13 +1378,22 @@ fn threat_level_serde(t) {
     return "Unknown";
 }
 
+# 0.9.4 F-9 sentinel audit — *_from_serde returns -1 for "string did not
+# match any enum variant" (a parse-failure marker, not a valid enum value).
+# Safe today because all aegis enums use 0-based positive constants;
+# documented here so a future enum that legitimately uses -1 doesn't
+# collide silently. Caller convention: `if (parsed >= 0) { use(parsed); }`.
+# See ADR 0001 (sentinel-values-for-absent-state) and
+# docs/audit/2026-05-10-audit.md F-9.
+var _AEGIS_SERDE_INVALID = 0 - 1;
+
 fn threat_level_from_serde(cstr) {
     if (streq(cstr, "Critical") == 1) { return THREAT_CRITICAL; }
     if (streq(cstr, "High")     == 1) { return THREAT_HIGH; }
     if (streq(cstr, "Medium")   == 1) { return THREAT_MEDIUM; }
     if (streq(cstr, "Low")      == 1) { return THREAT_LOW; }
     if (streq(cstr, "Info")     == 1) { return THREAT_INFO; }
-    return 0 - 1;
+    return _AEGIS_SERDE_INVALID;
 }
 
 fn event_type_serde(k) {
@@ -1396,7 +1425,7 @@ fn event_type_from_serde(cstr) {
     if (streq(cstr, "PolicyViolation")         == 1) { return EV_POLICY_VIOLATION; }
     if (streq(cstr, "DatabaseIntegrity")       == 1) { return EV_DATABASE_INTEGRITY; }
     if (streq(cstr, "DatabaseAccessViolation") == 1) { return EV_DATABASE_ACCESS_VIOLATION; }
-    return 0 - 1;
+    return _AEGIS_SERDE_INVALID;
 }
 
 fn quarantine_action_serde(a) {
@@ -1413,7 +1442,7 @@ fn quarantine_action_from_serde(cstr) {
     if (streq(cstr, "Isolate")   == 1) { return QA_ISOLATE; }
     if (streq(cstr, "RateLimit") == 1) { return QA_RATELIMIT; }
     if (streq(cstr, "None")      == 1) { return QA_NONE; }
-    return 0 - 1;
+    return _AEGIS_SERDE_INVALID;
 }
 
 fn scan_type_serde(s) {
@@ -1429,7 +1458,7 @@ fn scan_type_from_serde(cstr) {
     if (streq(cstr, "OnExecute") == 1) { return ST_ON_EXECUTE; }
     if (streq(cstr, "Periodic")  == 1) { return ST_PERIODIC; }
     if (streq(cstr, "Manual")    == 1) { return ST_MANUAL; }
-    return 0 - 1;
+    return _AEGIS_SERDE_INVALID;
 }
 
 # ---------- jv-tree builder helpers -----------------------------
@@ -1974,4 +2003,77 @@ fn security_event_from_json_v(v) {
 fn security_event_from_json(json_str) {
     if (_aegis_json_size_ok(json_str) == 0) { return 0; }
     return security_event_from_json_v(json_v_parse(json_str));
+}
+
+# ================================================================
+# Boundary validators — agent_id / agent_addr.
+#
+# Lives in lib.cyr (not firewall.cyr) so both modules can use it —
+# include order is lib.cyr → firewall.cyr, so firewall references
+# work transparently. See docs/audit/2026-05-10-audit.md F-2 (firewall
+# path), F-7 (quarantine path).
+#
+# The strict variant (used everywhere) rejects null, empty, over-length,
+# and any byte outside [a-zA-Z0-9_.-]. Categorically blocks the
+# Unicode-confusable / case-variant / zero-width quarantine bypass class
+# (CVE-2024-43093, CVE-2025-52488 family) — none of those bytes are in
+# the whitelist.
+#
+# The "or empty" variant additionally accepts null / empty cstr — used
+# only by security_event_new where "no agent associated" is a documented
+# valid state (treat as anonymous event). aegis_report_event then short-
+# circuits the auto-quarantine path when agent_id is 0.
+# ================================================================
+
+fn _aegis_valid_agent_id(s) {
+    if (s == 0) { return 0; }
+    var n = strlen(s);
+    if (n == 0) { return 0; }
+    if (n > 54) { return 0; }     # 54 = nein 64-char limit minus "aegis_iso_" prefix
+    var i = 0;
+    while (i < n) {
+        var c = load8(s + i);
+        var ok = 0;
+        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } } # 0-9
+        if (c >= 0x41) { if (c <= 0x5A) { ok = 1; } } # A-Z
+        if (c >= 0x61) { if (c <= 0x7A) { ok = 1; } } # a-z
+        if (c == 0x2D) { ok = 1; }                    # -
+        if (c == 0x2E) { ok = 1; }                    # .
+        if (c == 0x5F) { ok = 1; }                    # _
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Same shape, but null/empty pass — for security_event_new where
+# anonymous events (no agent_id) are valid. Non-empty must whitelist.
+fn _aegis_valid_agent_id_or_empty(s) {
+    if (s == 0) { return 1; }
+    if (strlen(s) == 0) { return 1; }
+    return _aegis_valid_agent_id(s);
+}
+
+# agent_addr — pragmatic shape ([0-9a-fA-F:./], length 1..43). Rejects
+# every nftables-injection vector. Typed parse + canonical re-emit
+# tracked for 0.9.5.
+fn _aegis_valid_agent_addr(s) {
+    if (s == 0) { return 0; }
+    var n = strlen(s);
+    if (n == 0) { return 0; }
+    if (n > 43) { return 0; }    # max IPv6 with /128 prefix
+    var i = 0;
+    while (i < n) {
+        var c = load8(s + i);
+        var ok = 0;
+        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } } # 0-9
+        if (c >= 0x41) { if (c <= 0x46) { ok = 1; } } # A-F
+        if (c >= 0x61) { if (c <= 0x66) { ok = 1; } } # a-f
+        if (c == 0x2E) { ok = 1; }                    # .
+        if (c == 0x3A) { ok = 1; }                    # :
+        if (c == 0x2F) { ok = 1; }                    # /
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }

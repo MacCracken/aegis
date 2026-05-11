@@ -1041,6 +1041,12 @@ fn main() {
     test_p1_firewall_rejects_bad_agent_addr();
     test_p1_firewall_accepts_good_input();
     test_p1_json_oversize_rejected();
+    # 0.9.4 F-7: quarantine path Unicode/case-variant defense
+    test_p1_quarantine_rejects_bad_agent_id();
+    test_p1_quarantine_release_rejects_bad();
+    test_p1_quarantine_is_get_reject_bad();
+    test_p1_security_event_strips_bad_agent_id();
+    test_p1_quarantine_accepts_good_input();
     return assert_summary();
 }
 
@@ -1251,6 +1257,91 @@ fn test_p1_json_oversize_rejected() {
     "oversize JSON rejected by quarantine_entry_from_json");
     assert_eq(aegis_config_from_json(str_data(huge)), 0,
     "oversize JSON rejected by aegis_config_from_json");
+    return 0;
+}
+
+# ================================================================
+# 0.9.4 P(-1) F-7 — quarantine-path agent_id whitelist enforcement.
+# Categorically blocks Unicode confusables / case variants /
+# zero-width inserts (CVE-2024-43093 family) since none of those
+# bytes are in the [a-zA-Z0-9_.-] whitelist.
+# ================================================================
+
+fn test_p1_quarantine_rejects_bad_agent_id() {
+    test_group("p1_quarantine_rejects_bad_agent_id");
+    var d = aegis_new(aegis_config_default());
+    # Newline injection.
+    assert_eq(aegis_quarantine_agent(d, "bad\nname", "x", THREAT_HIGH), 0,
+    "agent_id with newline rejected");
+    # Empty.
+    assert_eq(aegis_quarantine_agent(d, "", "x", THREAT_HIGH), 0,
+    "empty agent_id rejected");
+    # Slash (path-traversal flavor).
+    assert_eq(aegis_quarantine_agent(d, "../etc/passwd", "x", THREAT_HIGH), 0,
+    "agent_id with slash rejected");
+    # Quote.
+    assert_eq(aegis_quarantine_agent(d, "agent\"x", "x", THREAT_HIGH), 0,
+    "agent_id with quote rejected");
+    return 0;
+}
+
+fn test_p1_quarantine_release_rejects_bad() {
+    test_group("p1_quarantine_release_rejects_bad");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "alice", "x", THREAT_HIGH);
+    # Confirm baseline: alice is quarantined.
+    assert_eq(aegis_is_quarantined(d, "alice"), 1, "alice quarantined");
+    # Release with bad id should be rejected, alice still quarantined.
+    assert_eq(aegis_release_agent(d, "alice\n"), 0,
+    "release with newline rejected");
+    assert_eq(aegis_is_quarantined(d, "alice"), 1,
+    "alice still quarantined after bad release");
+    # Valid release works.
+    assert_eq(aegis_release_agent(d, "alice"), 1, "valid release succeeds");
+    assert_eq(aegis_is_quarantined(d, "alice"), 0, "alice released");
+    return 0;
+}
+
+fn test_p1_quarantine_is_get_reject_bad() {
+    test_group("p1_quarantine_is_get_reject_bad");
+    var d = aegis_new(aegis_config_default());
+    aegis_quarantine_agent(d, "alice", "x", THREAT_HIGH);
+    assert_eq(aegis_is_quarantined(d, "alice;drop"), 0,
+    "is_quarantined rejects semicolon");
+    assert_eq(aegis_get_quarantine(d, "alice;drop"), 0,
+    "get_quarantine rejects semicolon");
+    # Empty also rejected.
+    assert_eq(aegis_is_quarantined(d, ""), 0, "is_quarantined rejects empty");
+    assert_eq(aegis_get_quarantine(d, ""), 0, "get_quarantine rejects empty");
+    return 0;
+}
+
+# security_event_new accepts null/empty (anonymous events) but strips
+# non-empty bad agent_ids — the event is still recorded with aid=0.
+# Silently dropping events would mask attack attempts.
+fn test_p1_security_event_strips_bad_agent_id() {
+    test_group("p1_security_event_strips_bad_agent_id");
+    var ev = security_event_new(EV_SANDBOX_ESCAPE, "src", "bad\nid",
+    THREAT_CRITICAL, "boom");
+    assert_neq(ev, 0, "event still constructed");
+    assert_eq(event_agent_id(ev), 0, "bad agent_id stripped to null");
+    # Auto-quarantine path then sees no agent_id → no quarantine fires.
+    var d = aegis_new(aegis_config_default());
+    var action = aegis_report_event(d, ev);
+    assert_eq(action, QA_NONE,
+    "Critical event with stripped agent_id → no auto-quarantine");
+    assert_eq(aegis_total_events(d), 1, "event still recorded");
+    return 0;
+}
+
+# Regression guard — valid input still accepted on quarantine path.
+fn test_p1_quarantine_accepts_good_input() {
+    test_group("p1_quarantine_accepts_good_input");
+    var d = aegis_new(aegis_config_default());
+    var e = aegis_quarantine_agent(d, "agent-1", "x", THREAT_HIGH);
+    assert_neq(e, 0, "valid agent_id quarantine succeeds");
+    var e2 = aegis_quarantine_agent(d, "Agent.X_2", "x", THREAT_HIGH);
+    assert_neq(e2, 0, "valid mixed-id accepted");
     return 0;
 }
 

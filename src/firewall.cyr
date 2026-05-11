@@ -16,61 +16,10 @@
 # agent_addr). nein's validate_identifier only fires at firewall_validate
 # time; aegis fails fast.
 
-# ----------------------------------------------------------------
-# Whitelist validators — at the firewall builder seam.
-# ----------------------------------------------------------------
-
-# agent_id: ASCII [a-zA-Z0-9_.-], length 1..54.
-# Cap is 54 so "aegis_iso_<id>" and "aegis_rl_<id>" both fit nein's
-# 64-char identifier limit (10-char prefix + 54 = 64). Categorically
-# rejects every Unicode confusable / zero-width / control codepoint
-# (CVE-2024-43093 class) since none of them are in [a-zA-Z0-9_.-].
-fn _aegis_valid_agent_id(s) {
-    if (s == 0) { return 0; }
-    var n = strlen(s);
-    if (n == 0)  { return 0; }
-    if (n > 54)  { return 0; }
-    var i = 0;
-    while (i < n) {
-        var c = load8(s + i);
-        var ok = 0;
-        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } } # 0-9
-        if (c >= 0x41) { if (c <= 0x5A) { ok = 1; } } # A-Z
-        if (c >= 0x61) { if (c <= 0x7A) { ok = 1; } } # a-z
-        if (c == 0x2D) { ok = 1; }                    # -
-        if (c == 0x2E) { ok = 1; }                    # .
-        if (c == 0x5F) { ok = 1; }                    # _
-        if (ok == 0) { return 0; }
-        i = i + 1;
-    }
-    return 1;
-}
-
-# agent_addr: pragmatic shape — [0-9a-fA-F:.] plus optional /N suffix.
-# Length 1..43 (max IPv6 with /128). Not a typed parse; rejects every
-# nftables-injection vector (whitespace, braces, semicolons, newlines,
-# quotes, comment markers). Deeper fix (typed parse + canonical re-emit)
-# tracked for 0.9.5.
-fn _aegis_valid_agent_addr(s) {
-    if (s == 0) { return 0; }
-    var n = strlen(s);
-    if (n == 0)  { return 0; }
-    if (n > 43)  { return 0; }
-    var i = 0;
-    while (i < n) {
-        var c = load8(s + i);
-        var ok = 0;
-        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } } # 0-9
-        if (c >= 0x41) { if (c <= 0x46) { ok = 1; } } # A-F
-        if (c >= 0x61) { if (c <= 0x66) { ok = 1; } } # a-f
-        if (c == 0x2E) { ok = 1; }                    # .
-        if (c == 0x3A) { ok = 1; }                    # :
-        if (c == 0x2F) { ok = 1; }                    # /
-        if (ok == 0) { return 0; }
-        i = i + 1;
-    }
-    return 1;
-}
+# Validators (_aegis_valid_agent_id / _aegis_valid_agent_addr) live in
+# src/lib.cyr — shared with the quarantine path's F-7 fix (0.9.4) so
+# both surfaces use the same whitelist. Include order is lib.cyr →
+# firewall.cyr; calls below resolve transparently.
 
 # ----------------------------------------------------------------
 # Helpers — build the per-agent table name "aegis_<prefix>_<id>"

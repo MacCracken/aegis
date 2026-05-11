@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-05-10
+
+**P(-1) follow-up — closes F-7 (Unicode quarantine bypass) and F-9 (sentinel audit) from the 0.9.3 audit report.** F-6 (TOCTOU + symlink follow) re-deferred to 0.9.5 once the cyrius stdlib gains a `sys_lstat` wrapper — see `docs/audit/2026-05-10-audit.md` F-6 update for the rationale. Tests **322 passed / 0 failed** (was 303; +5 new test groups, +19 new assertions). API surface unchanged at 151 public fns (helpers stay `_aegis_*` private).
+
+### Breaking
+
+- **Quarantine API now rejects non-whitelist `agent_id` cstrs.** `aegis_quarantine_agent` / `aegis_release_agent` / `aegis_is_quarantined` / `aegis_get_quarantine` apply `_aegis_valid_agent_id` (`^[a-zA-Z0-9_.-]{1,54}$`) at ingress; invalid input returns `0` (no entry created / no release performed / not quarantined / no entry returned). Migration: consumers passing IDs outside the whitelist must canonicalize at their own boundary first. In practice no consumer is in production (daimon / argonaut still planned), so this is breaking-in-name-only — but the `### Breaking` subsection documents the contract change for downstream awareness.
+- `security_event_new(..., agent_id_cstr, ...)` now strips bad agent_ids to `aid=0` (anonymous event) rather than storing them. The event is still recorded; the auto-quarantine path then short-circuits per existing semantics. Silently dropping events would mask attack attempts — strip-and-record is the safer middle ground.
+
+### Security
+
+- **F-7 (MEDIUM, CWE-176/CWE-178)** — Unicode-normalization quarantine bypass class (CVE-2024-43093 Android KEV, CVE-2025-52488 DNN, CVE-2024-38820/38827 Spring family) is closed at the in-memory quarantine map. `_aegis_valid_agent_id` (introduced in 0.9.3 for the firewall path) moved from `src/firewall.cyr` to `src/lib.cyr` so both modules share the validator. Also covers case-variant + zero-width-insertion bypass since none of those bytes are in `[a-zA-Z0-9_.-]`.
+- **F-9 (MEDIUM, CWE-690)** — Sentinel-collision audit pass. Introduced `_AEGIS_SERDE_INVALID = -1` named constant; replaced 4 magic-number `return 0 - 1` returns in `*_from_serde` parsers with the named form. `AEGIS_AUTO_RELEASE_NONE` and `QA_NONE` already had docstrings — confirmed clean. Re-affirmed precondition: aegis allocations never land at address 0 (relies on bump-allocator from `lib/alloc.cyr`); a future allocator swap would need to preserve this. No active code-behaviour change; the named constant is preventive — catches any future enum-value-collides-with-sentinel addition at code-review time.
+
+### Changed
+
+- `src/lib.cyr` — `_aegis_valid_agent_id`, `_aegis_valid_agent_id_or_empty` (new variant for security_event_new), `_aegis_valid_agent_addr` moved here from `src/firewall.cyr`. Validators now shared across both modules; firewall.cyr keeps a one-line note pointing at lib.cyr.
+- `docs/audit/2026-05-10-audit.md` — F-7 status: Deferred → **Fixed in 0.9.4**. F-9 status: Deferred → **Fixed in 0.9.4** (annotation pass). F-6: Deferred to 0.9.5 with a sharper rationale (cyrius stdlib `sys_lstat` patch needed first; otherwise inconsistent with the project's "syscalls go through `SYS_*` constants" convention).
+
+### Verification
+
+- `scripts/audit.sh` green end-to-end.
+- `scripts/check-api-surface.sh`: 151 public fns, surface matches snapshot exactly.
+- 5 new test groups in `tests/aegis.tcyr`: `p1_quarantine_rejects_bad_agent_id`, `p1_quarantine_release_rejects_bad`, `p1_quarantine_is_get_reject_bad`, `p1_security_event_strips_bad_agent_id`, `p1_quarantine_accepts_good_input`.
+
 ## [0.9.3] — 2026-05-10
 
 **P(-1) hardening pass — boundary validation against the 2024-2026 CVE landscape.** Six security-class fixes (F-1, F-2, F-3, F-4, F-5, F-8) closed at the API boundary. Three findings (F-6 TOCTOU, F-7 Unicode quarantine bypass, F-9 sentinel audit) deferred to 0.9.4 with concrete plans. Full audit report at [`docs/audit/2026-05-10-audit.md`](docs/audit/2026-05-10-audit.md). Tests **303 passed / 0 failed** (was 274; +7 new test groups, +29 new assertions). API surface unchanged (151 public fns) — all new helpers are `_aegis_*` private.

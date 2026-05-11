@@ -20,7 +20,8 @@
 - [x] **0.9.1 rust scaffold retired** — `docs/reference/firewall.rs.ref` deleted; supporting "do not modify the rust spec" guidance removed across CLAUDE.md / CONTRIBUTING.md / SECURITY.md / README.md / docs / inline comments
 - [x] **0.9.2 V1 prep** — API surface snapshot + CI gate (`scripts/check-api-surface.sh`); doc-health ledger (`docs/doc-health.md`); README API list polished to cover all 151 public fns; example consumer at `docs/examples/basic_consumer.cyr` exercising the surface end-to-end (stand-in until daimon/argonaut consume directly)
 - [x] **0.9.3 P(-1) hardening** — first audit report at `docs/audit/2026-05-10-audit.md`; F-1/F-2/F-3/F-4/F-5/F-8 boundary-validation fixes against the 2024-2026 CVE landscape; tests 303/0 (was 274/0)
-- [ ] **0.9.4 P(-1) follow-up** — F-6 TOCTOU (sys_stat → sys_lstat as cheap fix), F-7 Unicode quarantine bypass (reuse F-2 validator on quarantine API; `### Breaking` contract change), F-9 sentinel audit annotations
+- [x] **0.9.4 P(-1) follow-up** — F-7 Unicode quarantine bypass (`_aegis_valid_agent_id` applied to quarantine API; `### Breaking` contract change) + F-9 sentinel-audit annotations (`_AEGIS_SERDE_INVALID` named constant); tests 322/0 (was 303/0)
+- [ ] **0.9.5** — F-6 TOCTOU close-out (cyrius stdlib `sys_lstat` patch + scanner switch), or skip-ahead to openat refactor
 - [ ] **1.0.0 release** — clean review/audit before cut; no new deliverables
 
 ## Shipped milestones
@@ -38,6 +39,7 @@
 | **0.9.1** | Rust scaffold retired — `docs/reference/firewall.rs.ref` and supporting guidance fully removed | 2026-05-10 |
 | **0.9.2** | V1 prep — API surface CI gate, doc-health ledger, README API polish, example consumer | 2026-05-10 |
 | **0.9.3** | P(-1) hardening — first audit report; F-1..F-5 + F-8 boundary fixes; tests 274 → 303 | 2026-05-10 |
+| **0.9.4** | P(-1) follow-up — F-7 quarantine-API whitelist (`### Breaking`) + F-9 sentinel annotations; tests 303 → 322 | 2026-05-10 |
 
 ## Upcoming milestones
 
