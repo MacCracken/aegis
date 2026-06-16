@@ -34,6 +34,18 @@ API surface, and the firewall ruleset shape are byte-for-byte unchanged; the
 - **nein `1.5.0` → `1.5.3`** — latest `dist/nein.cyr` bundle; firewall
   ruleset builders (`table_`/`chain_`/`rule_`/`match_`/`verdict_`) unchanged.
 
+### Infrastructure
+
+- **CI / release modernized to the canonical installer** (`ci.yml`,
+  `release.yml`). Both workflows now install via
+  `scripts/install.sh` (`curl … | CYRIUS_VERSION=<pin> sh`) instead of
+  hand-unpacking a release tarball into a version-pinned layout. CI gains a
+  `setup` job that parses the `cyrius.cyml [package].cyrius` pin once and
+  feeds it to the build via `needs` (sigil pattern). All `cc5` references
+  removed — the compiler driver is `cyrius` over `cycc` codegen, and the
+  aarch64 cross-build probes `cycc_aarch64` (was `cc5_aarch64`); the same
+  rename applied to the `scripts/audit.sh` header comment.
+
 ## [1.0.0] — 2026-05-10
 
 **First stable release.** No new functionality — the cut freezes the API surface that 0.5.0 → 0.9.5 built up. The 151-fn machine-checkable surface at `docs/development/api-surface-1.0.snapshot` is now the SemVer-stable contract: additions are non-breaking, removals or renames need a major bump.

@@ -12,41 +12,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Toolchain pin ──
+  # Single source of truth for the cyrius version is
+  # `cyrius.cyml [package].cyrius` (CLAUDE.md: do not hardcode the
+  # toolchain version anywhere else). Parse it once here and expose it
+  # as an output the build job consumes via `needs`. Pattern lifted
+  # from sigil.
+  setup:
+    name: Resolve toolchain pin
+    runs-on: ubuntu-latest
+    outputs:
+      cyrius_version: ${{ steps.pin.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read Cyrius pin from cyrius.cyml
+        id: pin
+        run: |
+          PIN=$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')
+          if [ -z "$PIN" ]; then
+            echo "ERROR: could not parse [package].cyrius pin from cyrius.cyml"
+            exit 1
+          fi
+          echo "version=$PIN" >> "$GITHUB_OUTPUT"
+          echo "Cyrius pin: $PIN"
+
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    needs: setup
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Cyrius toolchain
-        # Lays out ~/.cyrius/versions/<VERSION>/{bin,lib} and symlinks
-        # ~/.cyrius/{bin,lib} -> versions/<VERSION>/{bin,lib}. cc5 5.10.9+
-        # resolves arch-peer includes (e.g. syscalls_x86_64_linux.cyr)
-        # against the version-pinned path; the un-versioned ~/.cyrius/lib
-        # layout that worked pre-5.10.9 no longer finds peer files.
+      - name: Install Cyrius ${{ needs.setup.outputs.cyrius_version }}
+        # Canonical installer lays out ~/.cyrius/versions/<VERSION>/{bin,lib}
+        # and re-points ~/.cyrius/{bin,lib} at it. The compiler driver is
+        # `cyrius` (front-end) over `cycc` (codegen); arch-peer includes
+        # (e.g. syscalls_x86_64_linux.cyr) resolve against the versioned
+        # lib path. `>> $GITHUB_PATH` only affects subsequent steps.
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
-          echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          VERSIONED="$HOME/.cyrius/versions/$CYRIUS_VERSION"
-          mkdir -p "$VERSIONED/bin" "$VERSIONED/lib"
-          cp "$CYRIUS_DIR/bin/"* "$VERSIONED/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$VERSIONED/lib/" 2>/dev/null || true
-          chmod +x "$VERSIONED/bin/"* 2>/dev/null || true
-          ln -sfn "$VERSIONED/bin" "$HOME/.cyrius/bin"
-          ln -sfn "$VERSIONED/lib" "$HOME/.cyrius/lib"
-          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="${{ needs.setup.outputs.cyrius_version }}" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain
-        # Must be a separate step — `>> $GITHUB_PATH` only takes effect
-        # on subsequent steps, so inlining `cc5 --version` after the
-        # path append in the install step would still use the runner's
-        # original PATH and report "cc5: command not found".
-        run: cc5 --version
+        # Separate step — the PATH append above only takes effect on
+        # subsequent steps.
+        run: cyrius --version
 
       - name: Resolve dependencies
         # Must run before any step that resolves `include "lib/..."`
@@ -127,10 +138,10 @@ jobs:
       - name: Cross-build aarch64
         # The toolchain translates x86_64 syscall numbers to aarch64
         # at codegen — no aegis source changes needed. If the
-        # toolchain bundle didn't ship cc5_aarch64, skip with a warning.
+        # toolchain bundle didn't ship cycc_aarch64, skip with a warning.
         run: |
-          if [ ! -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
-            echo "::warning::cc5_aarch64 not shipped with Cyrius — skipping aarch64 cross-build"
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius — skipping aarch64 cross-build"
             exit 0
           fi
           CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/aegis-aarch64

@@ -2,7 +2,7 @@
 # audit.sh — local one-shot equivalent of CI's quality gates.
 # Run before pushing. Mirrors `.github/workflows/ci.yml` so anything
 # that passes here passes in CI (modulo aarch64 cross-build which
-# requires cc5_aarch64 in the toolchain bundle).
+# requires cycc_aarch64 in the toolchain bundle).
 #
 # Usage: ./scripts/audit.sh
 # Exits non-zero on the first failed gate.

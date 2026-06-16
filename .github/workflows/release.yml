@@ -36,29 +36,21 @@ jobs:
           echo "Version verified: $TAG"
 
       - name: Install Cyrius toolchain
-        # Version-pinned layout — cc5 5.10.9+ resolves arch-peer includes
-        # (syscalls_x86_64_linux.cyr etc.) under ~/.cyrius/versions/<V>/lib.
+        # Canonical installer lays out ~/.cyrius/versions/<VERSION>/{bin,lib}
+        # and re-points ~/.cyrius/{bin,lib} at it — same mechanism as CI.
+        # Pin parsed from cyrius.cyml [package].cyrius (single source of
+        # truth). The compiler driver is `cyrius` over `cycc` codegen.
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          VERSIONED="$HOME/.cyrius/versions/$CYRIUS_VERSION"
-          mkdir -p "$VERSIONED/bin" "$VERSIONED/lib"
-          cp "$CYRIUS_DIR/bin/"* "$VERSIONED/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$VERSIONED/lib/" 2>/dev/null || true
-          chmod +x "$VERSIONED/bin/"* 2>/dev/null || true
-          ln -sfn "$VERSIONED/bin" "$HOME/.cyrius/bin"
-          ln -sfn "$VERSIONED/lib" "$HOME/.cyrius/lib"
-          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain
         # `>> $GITHUB_PATH` only applies to subsequent steps — must be
-        # a separate step or `cc5` is not on PATH yet.
-        run: cc5 --version
+        # a separate step or `cyrius` is not on PATH yet.
+        run: cyrius --version
 
       - name: Resolve deps
         run: cyrius deps
@@ -79,11 +71,11 @@ jobs:
 
       - name: Cross-build aarch64 (best-effort)
         run: |
-          if [ -x "$HOME/.cyrius/bin/cc5_aarch64" ]; then
+          if [ -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
             CYRIUS_DCE=1 cyrius build --aarch64 src/main.cyr build/aegis-aarch64
             echo "aegis-aarch64: $(wc -c < build/aegis-aarch64) bytes"
           else
-            echo "::warning::cc5_aarch64 not in toolchain — aarch64 binary skipped"
+            echo "::warning::cycc_aarch64 not in toolchain — aarch64 binary skipped"
           fi
 
       - name: Tests
@@ -106,9 +98,6 @@ jobs:
             timeout 10 "build/$name" || { echo "FUZZ CRASH: $name"; exit 1; }
             echo "  $name: ok"
           done
-
-      - name: Clean toolchain artifacts
-        run: rm -f cyrius-*.tar.gz
 
       - name: Archive
         run: |
