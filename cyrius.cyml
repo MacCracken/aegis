@@ -4,26 +4,30 @@ version = "${file:VERSION}"
 description = "aegis — security daemon for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "5.10.34"
+cyrius = "6.2.11"
 
 [build]
 entry = "src/main.cyr"
 output = "aegis"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr", "sakshi", "json", "random"]
+# 6.2.x stdlib reorg: the standalone `json` module (with base64/csv/toml)
+# folded into the bundled `bayan` distribution module, so `json` → `bayan`.
+# bayan re-exports the full json_v_* value API aegis serdes through. Matches
+# the agnostik 1.3.1 / sigil 6.2.1 toolchain-refresh migration.
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr", "sakshi", "bayan", "random"]
 
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
-tag = "1.2.1"
+tag = "1.3.1"
 modules = ["src/types.cyr", "src/error.cyr"]
 
 # Firewall enforcement for QA_ISOLATE / QA_RATELIMIT quarantine
-# actions. nein 1.5.0 ships a single-file dist bundle that exposes
+# actions. nein 1.5.3 ships a single-file dist bundle that exposes
 # the table_/chain_/rule_/match_/verdict_ API used by src/firewall.cyr.
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
 path = "../nein"
-tag = "1.5.0"
+tag = "1.5.3"
 modules = ["dist/nein.cyr"]

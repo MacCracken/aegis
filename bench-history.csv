@@ -8,3 +8,6 @@ date,version,bench,avg_ns,min_ns,max_ns,iterations,notes
 2026-05-08,0.8.1,aegis_next_id,2000,838,109000,100000,
 2026-05-08,0.8.1,security_event_new,3000,1000,206000,100000,
 2026-05-08,0.8.1,aegis_report_event,4000,2000,132000,50000,ring buffer ≈55× speedup vs 0.8.0
+2026-06-15,1.0.1,aegis_next_id,2000,978,61000,100000,cyrius 6.2.11 pin (json→bayan toolchain refresh)
+2026-06-15,1.0.1,security_event_new,3000,1000,119000,100000,cyrius 6.2.11 pin
+2026-06-15,1.0.1,aegis_report_event,5000,3000,78000,50000,cyrius 6.2.11 pin

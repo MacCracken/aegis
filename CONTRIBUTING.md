@@ -4,7 +4,7 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 
 ## Prerequisites
 
-- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (currently `5.10.34`)
+- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (currently `6.2.11`)
 - Linux x86_64 for now; aarch64 cross-build is best-effort in CI
 
 ## Workflow

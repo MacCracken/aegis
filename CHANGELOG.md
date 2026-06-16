@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-15
+
+Toolchain-refresh patch. No aegis source changes — wire formats, the 151-fn
+API surface, and the firewall ruleset shape are byte-for-byte unchanged; the
+326-assertion test suite + 1000-iter fuzz pass identically under the new pin.
+
+### Toolchain
+
+- **Cyrius pin `5.10.34` → `6.2.11`** (`cyrius.cyml [package].cyrius`). No
+  aegis source changes — wire formats, the 151-fn API surface, and the
+  firewall ruleset shape are byte-for-byte unchanged. Tracks the same
+  toolchain-refresh migration agnostik shipped at 1.3.1 and sigil at the
+  6.2.1 pin.
+- **`[deps] stdlib` `json` → `bayan`.** 6.2.x folds the standalone `json`
+  module (with `base64`/`csv`/`toml`) into the bundled `bayan` distribution
+  module; `lib/json.cyr` no longer ships. `bayan` re-exports the full
+  `json_v_*` value API aegis serdes all 8 records through, so the swap is
+  transparent — all 326 test assertions + the 1000-iter fuzz pass unchanged.
+  `lib/` re-synced from the 6.2.11 snapshot (`cyrius lib sync`).
+
+### Dependencies
+
+- **agnostik `1.2.1` → `1.3.1`** — toolchain-refresh patch; 871-fn API and
+  all wire formats byte-for-byte unchanged (used for `agent_id_new` UUID v4).
+- **nein `1.5.0` → `1.5.3`** — latest `dist/nein.cyr` bundle; firewall
+  ruleset builders (`table_`/`chain_`/`rule_`/`match_`/`verdict_`) unchanged.
+
 ## [1.0.0] — 2026-05-10
 
 **First stable release.** No new functionality — the cut freezes the API surface that 0.5.0 → 0.9.5 built up. The 151-fn machine-checkable surface at `docs/development/api-surface-1.0.snapshot` is now the SemVer-stable contract: additions are non-breaking, removals or renames need a major bump.
