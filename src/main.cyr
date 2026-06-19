@@ -3,6 +3,13 @@
 
 include "src/lib.cyr"
 include "src/firewall.cyr"
+# PAM (Pluggable Authentication Modules) — folded from agnosys in the agnosys →
+# agnodrm decomposition. Auth lives with the threat daemon: auth questions are
+# threats like any other. PAM is cross-platform (UNIX + DOS lean on it); the
+# agnos-PAM form is TBD. Errors + util (read_fd_to_str) resolve from the existing
+# error surface aegis already carries (cyrius result.cyr + the transitive
+# agnosys-core via agnostik); no new support modules needed.
+include "src/pam.cyr"
 
 fn main() {
     alloc_init();

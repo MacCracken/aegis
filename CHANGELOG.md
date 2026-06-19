@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-19
+
+**PAM folds into aegis.** Part of the `agnosys → agnodrm` ecosystem decomposition.
+Auth questions are threats like any other, so PAM (Pluggable Authentication
+Modules) belongs with the threat daemon. PAM is cross-platform (UNIX *and* DOS
+lean on it) — the work is preserved, not dropped; the agnos-PAM form is **TBD**.
+
+### Added
+
+- **`src/pam.cyr`** (722 lines) — PAM service/config enumeration + user auth,
+  folded from `agnosys`. It uses aegis's **existing** error surface (cyrius
+  `result.cyr` `err_*`/`is_err_result` + the transitive agnos-core util for
+  `read_fd_to_str`), so **no new support modules** were vendored — and the fold
+  added **zero** new duplicate symbols (the 6 pre-existing transitive
+  `agnostik_error`↔`agnos-core` `ERR_*` warnings are unrelated and unchanged).
+
+### Notes
+
+- The agnos-side `pam.cyr` removal couples to the agnodrm rename (agnosys's own
+  `main.cyr` still references it). The transitive `agnos-core` error-system
+  duplicate warnings are a separate downstream cleanup (agnostik's dep chain).
+- Verified: `cyrius build src/main.cyr` builds; no pam-specific undefined/dup.
+
 ## [1.0.1] — 2026-06-15
 
 Toolchain-refresh patch. No aegis source changes — wire formats, the 151-fn
