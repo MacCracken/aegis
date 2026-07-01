@@ -21,6 +21,32 @@ include "lib/process.cyr"
 include "lib/fs.cyr"
 
 # ================================================================
+# fd → Str reader (local)
+# ================================================================
+
+# Read up to `cap` bytes from `fd` and return them as a NUL-terminated
+# Str. Was `agnosys_read_fd_to_str` from the old agnosys library, which
+# was decomposed 2026-06-19 (trust→sigil, security/mac/audit→kavach,
+# pam→aegis, logging→sakshi, udev/drm→agnodrm) — the fd-read util did
+# not survive into any module aegis depends on, so it lives here now.
+fn pam_read_fd_to_str(fd, cap): i64 {
+    var buf = alloc(cap + 1);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, cap - total);
+        if (n <= 0) {
+            rgo = 0;
+        } else {
+            total = total + n;
+            if (total >= cap) { rgo = 0; }
+        }
+    }
+    store8(buf + total, 0);
+    return str_new(buf, total);
+}
+
+# ================================================================
 # PAM service constants
 # ================================================================
 
@@ -466,11 +492,11 @@ fn pam_read_service_config(service_name): i64 {
     # Read the file content
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) {
-        return err_syscall_failed(0 - fd, "failed to open PAM config file");
+        return err_io("failed to open PAM config file");
     }
     defer { sys_close(fd); }
 
-    var content = agnosys_read_fd_to_str(fd, 8192);
+    var content = pam_read_fd_to_str(fd, 8192);
 
     return pam_parse_config(content);
 }
@@ -484,11 +510,11 @@ fn pam_read_service_config(service_name): i64 {
 fn pam_list_users(): i64 {
     var fd = sys_open("/etc/passwd", O_RDONLY, 0);
     if (fd < 0) {
-        return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
+        return err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
-    var content = agnosys_read_fd_to_str(fd, 65536);
+    var content = pam_read_fd_to_str(fd, 65536);
     var lines = str_split(content, 10);  # '\n'
     var users = vec_new();
 
@@ -525,7 +551,7 @@ fn pam_list_sessions(): i64 {
     var buf = alloc(16384);
     var res = run_capture("/usr/bin/who", 0, 0, buf, 16384);
     if (is_err_result(res) == 1) {
-        return err_unknown("failed to run who command");
+        return err_io("failed to run who command");
     }
     var nbytes = payload(res);
     store8(buf + nbytes, 0);
@@ -691,11 +717,11 @@ fn pam_get_user_info(username): i64 {
 
     var fd = sys_open("/etc/passwd", O_RDONLY, 0);
     if (fd < 0) {
-        return err_syscall_failed(0 - fd, "failed to open /etc/passwd");
+        return err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
-    var content = agnosys_read_fd_to_str(fd, 65536);
+    var content = pam_read_fd_to_str(fd, 65536);
     var lines = str_split(content, 10);
     var name_str = str_from(username);
 

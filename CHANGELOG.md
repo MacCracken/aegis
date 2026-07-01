@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-06-30
+
+Tier-4 (consumer) step of the coordinated base-security-stack migration
+to cyrius **6.3.15**, over the migrated agnostik leaf (1.3.2). Toolchain
+pin + dependency refresh; no aegis-side source changes. All 326
+assertions pass on the new stack.
+
+### Changed
+
+- **Cyrius toolchain pin: 6.2.11 → 6.3.15.**
+- **Dependency**: agnostik **1.3.2** (was 1.3.1). nein unchanged (1.5.x),
+  vendored as source and compiled clean under 6.3.15.
+
+### Known issues
+
+- `src/pam.cyr` retains three unresolved references —
+  `agnosys_read_fd_to_str` (from the decomposed `agnosys` library) plus
+  `err_syscall_failed` / `err_unknown` — carried over from the 1.1.0 PAM
+  fold. They are unreachable (DCE-pruned, so the binary builds and tests
+  pass), but the PAM path is broken as written. Tracked for a dedicated
+  fix/removal pass; the AGNOS auth posture (recognition over
+  interrogation) may retire the `/etc/passwd`+PAM path entirely.
+
 ## [1.1.0] — 2026-06-19
 
 **PAM folds into aegis.** Part of the `agnosys → agnodrm` ecosystem decomposition.
