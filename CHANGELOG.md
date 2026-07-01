@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-07-01
+
+AGNOS cross-build readiness — `aegis` now compiles cleanly under
+`cyrius build --agnos`, joining the `--agnos`-clean set from the
+base-security-stack agnos-readiness pass.
+
+### Fixed
+
+- **`--agnos` build**: guard the `O_CLOEXEC` open flag. It is exposed by the
+  cyrius Linux / macOS / aarch64 syscall libs but not the agnos syscall lib
+  (agnos uses `AO_*` flags), so the fstat-TOCTOU stat path
+  (`_aegis_stat_modesize`, `src/lib.cyr`) failed to resolve the symbol on the
+  agnos target. Now defined to the stable Linux value (524288) under an
+  `#ifdef CYRIUS_TARGET_AGNOS` guard — agnos-only, to avoid a duplicate-symbol
+  conflict with the stdlib enum on Linux. Compile-readiness only; the agnos
+  `sys_open` ABI / close-on-exec runtime path is a separate step.
+
 ## [1.1.1] — 2026-06-30
 
 Tier-4 (consumer) step of the coordinated base-security-stack migration

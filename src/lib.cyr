@@ -912,6 +912,18 @@ fn _aegis_ensure_scan_history(d) {
 # (ESET) / CVE-2025-22224 (VMware) / CVE-2024-50379 (Tomcat) class.
 var _AEGIS_O_NOFOLLOW = 131072;
 
+# O_CLOEXEC is exposed by the cyrius Linux / macOS / aarch64 syscall libs
+# but NOT the agnos syscall lib (agnos uses AO_* flags + a divergent
+# sys_open ABI). Define the stable Linux value on the agnos target so the
+# --agnos cross-build resolves the symbol. Guarded agnos-only: an
+# unconditional def would collide with the stdlib enum on Linux (duplicate
+# symbol). NB this is the compile-readiness gate — the agnos sys_open
+# close-on-exec semantics + arg ABI are a runtime concern handled when the
+# agnos stat path is wired (QEMU/iron step), not here.
+#ifdef CYRIUS_TARGET_AGNOS
+var O_CLOEXEC = 524288;
+#endif
+
 # Stat a path WITHOUT following symlinks. Pattern: open(O_RDONLY |
 # O_CLOEXEC | O_NOFOLLOW) → fstat(fd) → close(fd). Returns 1 on
 # success and writes mode at out+0 and size at out+8. Returns 0 on
