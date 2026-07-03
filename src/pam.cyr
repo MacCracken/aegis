@@ -221,10 +221,10 @@ fn pam_session_new(session_id, user, login_time, tty, remote_host, pid): i64 {
 fn pam_validate_username(name): i64 {
     var nlen = strlen(name);
     if (nlen == 0) {
-        return err_invalid_argument("username cannot be empty");
+        return stik_err_invalid_argument("username cannot be empty");
     }
     if (nlen > 32) {
-        return err_invalid_argument("username too long (max 32 chars)");
+        return stik_err_invalid_argument("username too long (max 32 chars)");
     }
 
     # First character must be lowercase letter or underscore
@@ -233,7 +233,7 @@ fn pam_validate_username(name): i64 {
     if (first >= 97) { if (first <= 122) { first_ok = 1; } }  # a-z
     if (first == 95) { first_ok = 1; }  # _
     if (first_ok == 0) {
-        return err_invalid_argument("username must start with lowercase letter or underscore");
+        return stik_err_invalid_argument("username must start with lowercase letter or underscore");
     }
 
     # Remaining characters: a-z, 0-9, -, _
@@ -246,7 +246,7 @@ fn pam_validate_username(name): i64 {
         if (ch == 45) { ch_ok = 1; }   # -
         if (ch == 95) { ch_ok = 1; }   # _
         if (ch_ok == 0) {
-            return err_invalid_argument("username contains invalid character");
+            return stik_err_invalid_argument("username contains invalid character");
         }
         i = i + 1;
     }
@@ -264,7 +264,7 @@ fn pam_parse_passwd_line(line): i64 {
     # Split by ':'
     var fields = str_split(line, 58);  # 58 = ':'
     if (vec_len(fields) < 7) {
-        return err_invalid_argument("malformed passwd line (expected 7 fields)");
+        return stik_err_invalid_argument("malformed passwd line (expected 7 fields)");
     }
 
     var username = vec_get(fields, 0);
@@ -281,10 +281,10 @@ fn pam_parse_passwd_line(line): i64 {
     # Validate uid/gid are numeric (str_to_int returns 0 for invalid,
     # but "0" is valid for root — check that string actually looks numeric)
     if (str_len(uid_str) == 0) {
-        return err_invalid_argument("invalid UID in passwd line");
+        return stik_err_invalid_argument("invalid UID in passwd line");
     }
     if (str_len(gid_str) == 0) {
-        return err_invalid_argument("invalid GID in passwd line");
+        return stik_err_invalid_argument("invalid GID in passwd line");
     }
 
     # Heuristic: UIDs below 1000 are system users
@@ -433,17 +433,17 @@ fn pam_parse_config(content): i64 {
 
         var parts = pam_split_whitespace(line);
         if (vec_len(parts) < 3) {
-            return err_invalid_argument("malformed PAM rule (need type, control, module)");
+            return stik_err_invalid_argument("malformed PAM rule (need type, control, module)");
         }
 
         var rule_type = pam_parse_rule_type(vec_get(parts, 0));
         if (rule_type < 0) {
-            return err_invalid_argument("unknown PAM rule type");
+            return stik_err_invalid_argument("unknown PAM rule type");
         }
 
         var control = pam_parse_control(vec_get(parts, 1));
         if (control < 0) {
-            return err_invalid_argument("unknown PAM control flag");
+            return stik_err_invalid_argument("unknown PAM control flag");
         }
 
         var module = vec_get(parts, 2);
@@ -492,7 +492,7 @@ fn pam_read_service_config(service_name): i64 {
     # Read the file content
     var fd = sys_open(str_data(path), O_RDONLY, 0);
     if (fd < 0) {
-        return err_io("failed to open PAM config file");
+        return stik_err_io("failed to open PAM config file");
     }
     defer { sys_close(fd); }
 
@@ -510,7 +510,7 @@ fn pam_read_service_config(service_name): i64 {
 fn pam_list_users(): i64 {
     var fd = sys_open("/etc/passwd", O_RDONLY, 0);
     if (fd < 0) {
-        return err_io("failed to open /etc/passwd");
+        return stik_err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
@@ -551,7 +551,7 @@ fn pam_list_sessions(): i64 {
     var buf = alloc(16384);
     var res = run_capture("/usr/bin/who", 0, 0, buf, 16384);
     if (is_err_result(res) == 1) {
-        return err_io("failed to run who command");
+        return stik_err_io("failed to run who command");
     }
     var nbytes = payload(res);
     store8(buf + nbytes, 0);
@@ -609,12 +609,12 @@ fn pam_render_config(rules): i64 {
 fn pam_validate_rule(rule): i64 {
     var module = pam_rule_module(rule);
     if (str_len(module) == 0) {
-        return err_invalid_argument("PAM module path cannot be empty");
+        return stik_err_invalid_argument("PAM module path cannot be empty");
     }
 
     # Module must not contain ".."
     if (str_contains(module, str_from("..")) == 1) {
-        return err_invalid_argument("PAM module path must not contain '..'");
+        return stik_err_invalid_argument("PAM module path must not contain '..'");
     }
 
     # Reject shell metacharacters in module name
@@ -625,34 +625,34 @@ fn pam_validate_rule(rule): i64 {
     while (mi < mlen) {
         var ch = load8(md + mi);
         if (ch == 124) {
-            return err_invalid_argument("PAM module: dangerous char '|'");
+            return stik_err_invalid_argument("PAM module: dangerous char '|'");
         }
         if (ch == 59) {
-            return err_invalid_argument("PAM module: dangerous char ';'");
+            return stik_err_invalid_argument("PAM module: dangerous char ';'");
         }
         if (ch == 38) {
-            return err_invalid_argument("PAM module: dangerous char '&'");
+            return stik_err_invalid_argument("PAM module: dangerous char '&'");
         }
         if (ch == 36) {
-            return err_invalid_argument("PAM module: dangerous char '$'");
+            return stik_err_invalid_argument("PAM module: dangerous char '$'");
         }
         if (ch == 96) {
-            return err_invalid_argument("PAM module: dangerous char '`'");
+            return stik_err_invalid_argument("PAM module: dangerous char '`'");
         }
         if (ch == 62) {
-            return err_invalid_argument("PAM module: dangerous char '>'");
+            return stik_err_invalid_argument("PAM module: dangerous char '>'");
         }
         if (ch == 60) {
-            return err_invalid_argument("PAM module: dangerous char '<'");
+            return stik_err_invalid_argument("PAM module: dangerous char '<'");
         }
         if (ch == 33) {
-            return err_invalid_argument("PAM module: dangerous char '!'");
+            return stik_err_invalid_argument("PAM module: dangerous char '!'");
         }
         if (ch == 123) {
-            return err_invalid_argument("PAM module: dangerous char '{'");
+            return stik_err_invalid_argument("PAM module: dangerous char '{'");
         }
         if (ch == 125) {
-            return err_invalid_argument("PAM module: dangerous char '}'");
+            return stik_err_invalid_argument("PAM module: dangerous char '}'");
         }
         mi = mi + 1;
     }
@@ -668,34 +668,34 @@ fn pam_validate_rule(rule): i64 {
         while (aj < alen) {
             var ach = load8(ad + aj);
             if (ach == 124) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 59) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 38) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 36) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 96) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 62) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 60) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 33) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 123) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             if (ach == 125) {
-                return err_invalid_argument("PAM arg: dangerous char");
+                return stik_err_invalid_argument("PAM arg: dangerous char");
             }
             aj = aj + 1;
         }
@@ -717,7 +717,7 @@ fn pam_get_user_info(username): i64 {
 
     var fd = sys_open("/etc/passwd", O_RDONLY, 0);
     if (fd < 0) {
-        return err_io("failed to open /etc/passwd");
+        return stik_err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
@@ -743,5 +743,5 @@ fn pam_get_user_info(username): i64 {
         idx = idx + 1;
     }
 
-    return err_invalid_argument("user not found");
+    return stik_err_invalid_argument("user not found");
 }

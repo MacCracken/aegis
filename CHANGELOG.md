@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-07-03
+
+Consumer step of the agnostik **1.3.3** error-namespace bump. agnostik
+renamed its error-constructor API (`err_*` → `stik_err_*`) to disambiguate
+it from the stdlib `result` helpers; aegis calls exactly two of them from
+the PAM path, so this is a mechanical call-site rename plus a toolchain
+pin and dependency refresh. All 326 assertions pass on the new stack.
+
+### Changed
+
+- **agnostik error API migration (`err_*` → `stik_err_*`)**: renamed the
+  two agnostik error constructors aegis invokes — `err_invalid_argument`
+  (33 call sites) and `err_io` (4 call sites), all in `src/pam.cyr` — to
+  their `stik_err_`-prefixed forms. The stdlib `is_err_result` result
+  helper is unaffected and left untouched.
+- **Cyrius toolchain pin: 6.3.15 → 6.3.37.**
+- **Dependency**: agnostik **1.3.3** (was 1.3.2). nein unchanged (1.5.3).
+  Vendored agnostik error/types modules re-resolved to the 1.3.3 snapshot;
+  `cyrius.lock` updated accordingly.
+
 ## [1.1.2] — 2026-07-01
 
 AGNOS cross-build readiness — `aegis` now compiles cleanly under
