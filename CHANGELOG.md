@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-07-17
+
+Toolchain + dependency refresh onto the current AGNOS stack. Clears the
+`6.3.37 → 6.4.66` manifest-pin drift and moves both git deps to their
+latest tags. **No aegis source changes** — the 151-fn public surface, all
+wire formats, and the firewall ruleset shape are byte-for-byte unchanged;
+all 326 assertions pass on the new stack.
+
+### Changed
+
+- **Cyrius toolchain pin: 6.3.37 → 6.4.66.** Clears the "manifest-pin:
+  6.3.37 (drift — wrapper is 6.4.66)" warning; the wrapper was already on
+  6.4.66, so this only realigns the pin. The 6.4.x line changes the
+  `cyrius lib sync` default to copy the declared `[deps].stdlib` subset
+  (not the whole snapshot); the build sequence is now `cyrius lib sync`
+  **then** `cyrius deps`.
+- **Dependency: agnostik 1.3.3 → 1.3.4.** Toolchain-only bump on agnostik's
+  side (public API + wire formats byte-for-byte unchanged); aegis's two PAM
+  call sites (`stik_err_invalid_argument`, `stik_err_io`) are unaffected.
+- **Dependency: nein 1.5.3 → 1.6.4.** The firewall API aegis consumes
+  (`firewall_*` / `table_*` / `chain_*` / `rule_*` / `match_*` /
+  `verdict_*`) is **byte-identical** across the whole 1.6.x line (383 public
+  fns stable); the new MCP + Ed25519-signing surfaces are unused by aegis
+  and DCE-dropped. `src/firewall.cyr` needed no edits.
+
+### Dependencies
+
+- **nein 1.6.x transitive dist-dep closure.** nein 1.6.x's
+  `dist/nein.deps` sidecar declares `thread` / `thread_local` / `bote-core`
+  fold requirements, and its `[deps.*]` graph pulls libro/patra/bote/majra/
+  sigil dist bundles. To resolve these under the local-path dev overrides
+  (offline-safe) without dragging nein's audit-chain **source** graph into
+  aegis, `cyrius.cyml` now declares `[deps.libro]` (2.8.2, `dist/libro.cyr`)
+  and `[deps.bote]` (3.1.4, `dist/bote-core.cyr`) as self-contained dist
+  deps, and adds `thread`, `thread_local`, `freelist`, `fs`, `process`,
+  `ct`, `keccak`, `slice`, `sync` to `[deps].stdlib` to satisfy the bundles'
+  `.deps` sidecars. **All of this is dead code for aegis** — the firewall
+  path references no libro/bote symbol (verified) and DCE strips it; the
+  build carries only the two long-documented benign cross-bundle
+  "duplicate fn (last-definition-wins)" warnings (`sigil_hex _hex_nibble`,
+  `majra _sub_new`). Mirrors stiva's nein 1.6.x consumption pattern.
+  `cyrius.lock` re-resolved (60 deps locked).
+
+### Notes
+
+- **Error-constant namespacing (no aegis change required).** The AGNOS
+  stack is namespacing bare `ERR_*` enums to end cross-bundle symbol
+  collisions (agnostik `STIK_ERR_*`, nein `NEIN_ERR_*`, bote `BOTE_ERR_*`,
+  libro `LIBRO_ERR_*`). Aegis owns **no** bare `ERR_*` constants — its
+  enums already use domain prefixes (`THREAT_*`, `EV_*`, `QA_*`, `ST_*`,
+  `PAM_*`), so no rename applies here. The only `*ERR_*` tokens in the
+  build come from vendored `lib/` bundles (`STIK_ERR_*`, `NEIN_ERR_*`),
+  which are upstream and out of aegis's edit scope.
+
 ## [1.1.3] — 2026-07-03
 
 Consumer step of the agnostik **1.3.3** error-namespace bump. agnostik

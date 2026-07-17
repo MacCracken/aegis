@@ -7,21 +7,26 @@
 
 ## Version
 
+**1.1.4** — toolchain + dependency refresh (2026-07-17): cyrius pin `6.3.37` → `6.4.66` (clears manifest-pin drift), agnostik `1.3.3` → `1.3.4`, nein `1.5.3` → `1.6.4`. No aegis source changes — the 151-fn surface, all wire formats, and the firewall ruleset shape are byte-for-byte unchanged; 326 tests pass identically. nein 1.6.x's heavier dist-dep closure is absorbed by declaring libro `2.8.2` + bote `3.1.4` (bote-core) as dead-code dist deps and adding their sidecar stdlib (`thread`/`thread_local`/`freelist`/`fs`/`process`/`ct`/`keccak`/`slice`/`sync`) — all DCE-dropped. See CHANGELOG `[1.1.4]` and the earlier 1.1.0–1.1.3 entries for the intervening PAM-decouple and cross-build work.
+
 **1.0.1** — toolchain-refresh patch (2026-06-15): cyrius pin `5.10.34` → `6.2.11`, stdlib `json` → `bayan`, agnostik `1.2.1` → `1.3.1`, nein `1.5.0` → `1.5.3`. No aegis source changes — the 151-fn surface, all wire formats, and the firewall ruleset shape are byte-for-byte unchanged; 326 tests + fuzz pass identically.
 
 **1.0.0** — first stable (2026-05-10). The 151-fn public API surface is the SemVer-stable contract; additions non-breaking, removals/renames need a major bump. No new functionality at the cut — freezes the surface built across 0.5.0 → 0.9.5: nein firewall integration, JSON serde for all 8 records, sakshi-full structured logging, fixed-cap ring-buffer events log, boundary-validated API (whitelist on `agent_id` + `agent_addr`; clamps on JSON config; no-follow-symlink scanner). All 9 P(-1) audit findings closed (F-8 has a partial fix with the deeper depth-cap tracked as `lib/json.cyr` upstream). Two pre-1.0 `### Breaking` contract changes shipped along the way (0.9.4 quarantine-API whitelist; 0.9.5 scanner-no-follow). Tests **326 passed / 0 failed** across 92 groups + 1000-iter fuzz. Sign-off checklist verified: audit green, snapshot matches, doc-health zero stale, ADRs Accepted, example consumer builds and runs.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.2.11` (in `cyrius.cyml [package].cyrius`). Bumped from
-  `5.10.34` in the Unreleased toolchain-refresh — no aegis source changes;
-  `[deps] stdlib` swapped `json` → `bayan` (6.2.x folds standalone `json` into
-  the bundled `bayan` dist module, which re-exports the `json_v_*` value API).
-  `lib/` is re-synced from the toolchain snapshot via `cyrius lib sync`.
-  Composing agnostik + nein under the new pin surfaces benign cross-dep
-  duplicate-symbol warnings (`ERR_*`/`err_*` defined in both `agnostik_error.cyr`
-  and the transitive `agnosys-core.cyr`) and dead-path `exec_*` references — all
-  DCE-dropped, not gated by `audit.sh`, and not fixable from aegis source.
+- **Cyrius pin**: `6.4.66` (in `cyrius.cyml [package].cyrius`). Bumped from
+  `6.3.37` at 1.1.4 to clear the manifest-pin drift (the wrapper was already
+  6.4.66). Under 6.4.x the build sequence is explicit — `cyrius lib sync`
+  copies the declared `[deps].stdlib` subset into `./lib/`, **then**
+  `cyrius deps` resolves the git-dep bundles. `[deps].stdlib` grew a tail of
+  transitive-only modules (`thread`/`thread_local`/`freelist`/`fs`/`process`/
+  `ct`/`keccak`/`slice`/`sync`) to satisfy the nein 1.6.x dist-dep sidecars;
+  none are referenced by aegis source. Composing nein 1.6.4 + its libro/bote/
+  majra/sigil/patra dist bundles surfaces two benign cross-bundle
+  duplicate-symbol warnings (`sigil_hex._hex_nibble`, `majra._sub_new`,
+  last-definition-wins) plus ~3.1k unreachable fns — all DCE-dropped, not
+  gated by `audit.sh`, and not fixable from aegis source.
 - **CI**: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — toolchain install, `cyrius deps`, syntax check (`--with-deps`), fmt-diff, lint, vet, **api-surface drift gate** (0.9.2+), DCE build, ELF check, aarch64 cross-build (best-effort), smoke, full test suite, fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
 - **Release**: [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — runs CI, verifies tag matches `VERSION`, builds x86_64 + aarch64 (best-effort), packages source tarball + `aegis-<ver>-lib.cyr` + binaries + `SHA256SUMS`. `0.x` tags ship as prerelease.
 - **Local one-shot**: [`scripts/audit.sh`](../../scripts/audit.sh) — every CI gate locally.
@@ -44,9 +49,10 @@
 
 Direct (declared in `cyrius.cyml`):
 
-- **stdlib** — `string`, `fmt`, `alloc`, `vec`, `str`, `syscalls`, `io`, `args`, `assert`, `tagged`, `chrono`, `hashmap`, `bench`, `fnptr`, `sakshi`, `bayan`, `random`. (`json` → `bayan` at the 6.2.11 pin; `bayan` re-exports the `json_v_*` value API.)
-- **agnostik (v1.3.1)** — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `err_invalid_argument` (referenced by `types.cyr`'s parser paths we don't call, but the compiler needs the symbol). `lib/agnostik_*.cyr` is auto-resolved by `cyrius deps` from the version-pinned tag — not committed to the repo.
-- **nein (v1.5.3)** — `dist/nein.cyr` single-file bundle (`firewall_*` / `table_*` / `chain_*` / `rule_*` / `match_*` / `verdict_*` API + constants). Used by `src/firewall.cyr` to build nftables rulesets for `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions and the hardened-host baseline. Pulls `lib/agnosys-core.cyr` as a transitive dep (nein's own `[deps.agnosys]`); aegis doesn't reference agnosys-core symbols, so DCE drops them.
+- **stdlib** — core set: `string`, `fmt`, `alloc`, `vec`, `str`, `syscalls`, `io`, `args`, `assert`, `tagged`, `chrono`, `hashmap`, `bench`, `fnptr`, `sakshi`, `bayan`, `random` (`bayan` re-exports the `json_v_*` value API). Plus a transitive-only tail added at 1.1.4 purely to satisfy the nein 1.6.x dist-dep sidecars — `thread`, `thread_local`, `freelist`, `fs`, `process`, `ct`, `keccak`, `slice`, `sync` — none referenced by aegis source.
+- **agnostik (v1.3.4)** — `src/types.cyr` for `agent_id_new` (UUID v4 over `getrandom`); `src/error.cyr` for `stik_err_invalid_argument` / `stik_err_io` (the two error constructors aegis's PAM path invokes). `lib/agnostik_*.cyr` is resolved by `cyrius deps` from the version-pinned tag — not committed to the repo.
+- **nein (v1.6.4)** — `dist/nein.cyr` single-file bundle (`firewall_*` / `table_*` / `chain_*` / `rule_*` / `match_*` / `verdict_*` API + constants). Used by `src/firewall.cyr` to build nftables rulesets for `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions and the hardened-host baseline. The 1.6.x line kept that firewall API byte-identical (383 public fns stable) and added unused MCP + Ed25519-signing surfaces. Its `dist/nein.deps` sidecar + `[deps.*]` graph now pull `thread`/`thread_local`/`bote-core` fold requirements and the libro/patra/bote/majra/sigil dist bundles (all DCE-dropped dead code for aegis).
+- **libro (v2.8.2)** + **bote (v3.1.4, `dist/bote-core.cyr`)** — declared as top-level dist deps at 1.1.4 ONLY to satisfy nein 1.6.x's transitive closure under the local-path dev overrides (offline-safe), short-circuiting nein's audit-chain **source** walk. Neither is referenced by aegis source; both are DCE-stripped. Mirrors stiva's nein 1.6.x consumption pattern.
 
 ## Consumers
 

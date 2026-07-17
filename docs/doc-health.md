@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — aegis
 
-> **Last refresh**: 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh — `state.md` Toolchain + Dependencies cells, `CHANGELOG.md` Unreleased, `bench-history.csv` re-baselined; no aegis source touched) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-07-17 (1.1.4 cyrius `6.4.66` + dependency refresh — `state.md` Version/Toolchain/Dependencies cells, `CHANGELOG.md` `[1.1.4]`, `CONTRIBUTING.md` cyrius prereq, `VERSION`; no aegis source touched) · 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`aegis`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo cyrius pin / nein pin / agnostik pin lives in [`development/state.md`](development/state.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Aegis owns security policy enforcement for the AGNOS stack — wire shape (records, JSON serde, firewall ruleset format) is consumed by daimon / argonaut, so doc currency on the public surface carries weight. The doc surface is small (~18 files); most are load-bearing.
@@ -44,12 +44,12 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 | File | Last touched | Status | Notes |
 |---|---|---|---|
 | `README.md` | 2026-05-10 | ✅ Fresh | Status block at 1.0.0 first-stable; API list covers all 151 public fns (records / enums / daemon API / firewall surface / ring primitive); project-layout reflects current src/ + docs/. |
-| `CHANGELOG.md` | 2026-05-10 | ✅ Fresh | Source of truth for shipped work. Entries through 1.0.0. Historical entries preserved verbatim — they describe past releases accurately. |
+| `CHANGELOG.md` | 2026-07-17 | ✅ Fresh | Source of truth for shipped work. Entries through 1.1.4 (toolchain `6.4.66` + agnostik 1.3.4 / nein 1.6.4 dep refresh). Historical entries preserved verbatim — they describe past releases accurately. |
 | `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Durable rules. P(-1) Hardening framing updated post-1.0.0 cut to drop "pre-1.0.0 sweep" wording. |
-| `CONTRIBUTING.md` | 2026-06-15 | ✅ Fresh | Cyrius prereq points at `6.2.11` (bumped from `5.10.34` in the toolchain refresh); src/firewall.cyr in the surface map; rust-old parity-oracle guidance dropped (0.9.1) and replaced with an ADR rule for wire-shape divergences. |
+| `CONTRIBUTING.md` | 2026-07-17 | ✅ Fresh | Cyrius prereq points at `6.4.66` (bumped from `6.2.11` at the 1.1.4 refresh); src/firewall.cyr in the surface map; rust-old parity-oracle guidance dropped (0.9.1) and replaced with an ADR rule for wire-shape divergences. |
 | `SECURITY.md` | 2026-05-10 | ✅ Fresh | Reporting policy + scope. Out-of-scope "firewall integration" bullet dropped in 0.9.1 (no longer accurate since 0.9.0). |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. Re-read annually. |
-| `VERSION` | 2026-05-10 | ✅ Fresh | `1.0.0` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-07-17 | ✅ Fresh | `1.1.4` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -58,7 +58,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `state.md` | 2026-05-10 | ✅ Fresh | Live volatile state — VERSION line, cyrius pin, dep tags, source layout, test count, dependency block. Refreshed every release. |
+| `state.md` | 2026-07-17 | ✅ Fresh | Live volatile state — VERSION line (`1.1.4`), cyrius pin (`6.4.66`), dep tags (agnostik 1.3.4 / nein 1.6.4 + libro 2.8.2 / bote 3.1.4 transitive), source layout, test count, dependency block. Refreshed every release. |
 | `roadmap.md` | 2026-05-10 | ✅ Fresh | **Stripped to forward-looking only at 1.0.0**. Shipped milestones live in CHANGELOG (per first-party-doc convention); roadmap holds post-1.0 backlog only. |
 | `api-surface-1.0.snapshot` | 2026-05-10 | ✅ Fresh — auto-gated | Machine-checkable companion (one `module::fn/arity` line per public fn, 151 lines). **SemVer-stable contract from 1.0.0.** CI gate `scripts/check-api-surface.sh` diffs against this; unannounced additions/removals fail the build. |
 
