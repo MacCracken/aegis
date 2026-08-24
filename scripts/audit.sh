@@ -25,22 +25,24 @@ for f in src/*.cyr; do
 done
 
 gate "format"
+# `cyrius fmt <file>` rewrites in place and prints nothing; `--check` is
+# the non-mutating gate (non-zero exit + the first differing line).
 fail=0
 for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
     [ -f "$f" ] || continue
-    if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
-        red "needs fmt: $f"
-        fail=1
-    fi
+    cyrius fmt --check "$f" || fail=1
 done
-[ "$fail" -eq 0 ] || { red "fmt drift"; exit 1; }
+[ "$fail" -eq 0 ] || { red "fmt drift — run: cyrius fmt <file>"; exit 1; }
 green "fmt clean"
 
 gate "lint"
 fail=0
 for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
     [ -f "$f" ] || continue
-    out=$(cyrius lint "$f" 2>&1)
+    # `|| true`: since cyrius 6.5.19 lint's syntax pre-pass can exit
+    # non-zero. Under `set -e` a bare assignment would abort the whole
+    # audit here, before the warnings it is about to grep are ever shown.
+    out=$(cyrius lint "$f" 2>&1) || true
     if echo "$out" | grep -qE '^\s*warn '; then
         red "$f:"
         echo "$out" | grep '^\s*warn '
@@ -75,7 +77,14 @@ echo "$out" | grep -q "aegis ready" && green "smoke ok" \
     || { red "smoke output: $out"; exit 1; }
 
 gate "tests"
-cyrius test tests/aegis.tcyr 2>&1 | tail -2
+# Must not pipe directly — the pipeline's status would be tail's, so a red
+# suite could not fail the audit. Capture, then decide.
+test_out=$(cyrius test tests/aegis.tcyr 2>&1) || {
+    echo "$test_out" | tail -30
+    red "tests FAILED"
+    exit 1
+}
+echo "$test_out" | tail -2
 
 gate "fuzz"
 for f in tests/*.fcyr; do

@@ -87,16 +87,16 @@ jobs:
           fi
 
       - name: Format check
-        # cyrius fmt <file> emits the formatted source to stdout; diff
-        # against the committed file to enforce no drift.
+        # `cyrius fmt <file>` REWRITES IN PLACE and prints nothing; the
+        # non-mutating gate is `--check`, which exits non-zero and names
+        # the first differing line. (Bash's diff-against-stdout form is a
+        # 6.4.x-and-earlier idiom — under 6.5.x it reports every file as
+        # drifted because stdout is always empty.)
         run: |
           fail=0
           for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
             [ -f "$f" ] || continue
-            if ! diff -q <(cyrius fmt "$f" 2>/dev/null) "$f" > /dev/null; then
-              echo "needs fmt: $f"
-              fail=1
-            fi
+            cyrius fmt --check "$f" || fail=1
           done
           [ $fail -eq 0 ] || { echo "fmt: drift detected"; exit 1; }
 

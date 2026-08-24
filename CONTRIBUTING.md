@@ -4,7 +4,7 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 
 ## Prerequisites
 
-- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (currently `6.4.66`)
+- [Cyrius](https://github.com/MacCracken/cyrius) toolchain pinned in `cyrius.cyml [package].cyrius` (currently `6.5.35`)
 - Linux x86_64 for now; aarch64 cross-build is best-effort in CI
 
 ## Workflow
@@ -14,6 +14,7 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 3. Make your change in the right place:
    - Library types / daemon API → `src/lib.cyr`
    - Firewall builders (nein integration) → `src/firewall.cyr`
+   - PAM surface → `src/pam.cyr`
    - Daemon entry → `src/main.cyr`
    - Tests → `tests/aegis.tcyr`
    - Benches → `tests/aegis.bcyr`
@@ -31,7 +32,8 @@ Thanks for your interest. Aegis is the security daemon for the AGNOS stack — k
 | `cyrius test tests/aegis.tcyr` | Run the test suite |
 | `cyrius bench tests/aegis.bcyr` | Run benchmarks |
 | `cyrius check src/lib.cyr` | Syntax check |
-| `cyrius fmt src/lib.cyr` | Format (emits to stdout — diff to enforce) |
+| `cyrius fmt src/lib.cyr` | Format **in place** (prints nothing) |
+| `cyrius fmt --check src/lib.cyr` | Non-mutating format gate — non-zero exit names the first differing line |
 | `cyrius lint src/lib.cyr` | Static analysis |
 | `cyrius vet src/main.cyr` | Include-graph audit |
 | `cyrius deps` | Resolve dependencies into `lib/` |

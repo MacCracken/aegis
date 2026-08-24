@@ -37,13 +37,13 @@ fn test_threat_level_ordering() {
 fn test_event_type_labels() {
     test_group("event_type_labels");
     assert_streq(event_type_label(EV_INTEGRITY_VIOLATION),
-    "integrity_violation", "integrity_violation label");
+      "integrity_violation", "integrity_violation label");
     assert_streq(event_type_label(EV_SANDBOX_ESCAPE),
-    "sandbox_escape", "sandbox_escape label");
+      "sandbox_escape", "sandbox_escape label");
     assert_streq(event_type_label(EV_DATABASE_INTEGRITY),
-    "database_integrity", "database_integrity label");
+      "database_integrity", "database_integrity label");
     assert_streq(event_type_label(EV_DATABASE_ACCESS_VIOLATION),
-    "database_access_violation", "database_access_violation label");
+      "database_access_violation", "database_access_violation label");
     return 0;
 }
 
@@ -89,8 +89,8 @@ fn test_aegis_config_defaults() {
     assert_eq(aegis_config_quarantine_on_high(c),          1,     "quarantine_on_high true");
     assert_eq(aegis_config_max_events(c),                  10000, "max_events 10000");
     assert_eq(aegis_config_auto_release_timeout_secs(c),
-    AEGIS_AUTO_RELEASE_NONE,
-    "auto_release_timeout_secs None (-1)");
+      AEGIS_AUTO_RELEASE_NONE,
+      "auto_release_timeout_secs None (-1)");
     return 0;
 }
 
@@ -514,9 +514,9 @@ fn test_database_security_policy_defaults() {
     test_group("database_security_policy_defaults");
     var p = database_security_policy_default();
     assert_streq(str_data(dbpolicy_postgres_data_dir(p)),
-    "/var/lib/postgresql/data", "postgres_data_dir default");
+      "/var/lib/postgresql/data", "postgres_data_dir default");
     assert_streq(str_data(dbpolicy_redis_data_dir(p)),
-    "/var/lib/redis", "redis_data_dir default");
+      "/var/lib/redis", "redis_data_dir default");
     assert_eq(dbpolicy_audit_ddl(p),                 1,  "audit_ddl default true");
     assert_eq(dbpolicy_max_connections_per_agent(p), 10, "max_connections_per_agent 10");
     assert_eq(dbpolicy_check_socket_permissions(p),  1,  "check_socket_permissions true");
@@ -572,7 +572,7 @@ fn test_database_integrity_world_accessible_dir() {
     dbpolicy_set_check_socket_permissions(p, 0);
     var findings = aegis_check_database_integrity(d, p);
     assert_eq(_findings_have_category(findings, "database_permissions"), 1,
-    "world-accessible pgdir flagged as database_permissions");
+      "world-accessible pgdir flagged as database_permissions");
     sys_rmdir(pgdir);
     return 0;
 }
@@ -607,14 +607,14 @@ fn test_database_access_violation_quarantines_agent() {
     test_group("database_access_violation_quarantines_agent");
     var d = aegis_new(aegis_config_default());
     var action = aegis_report_database_access_violation(
-    d, "malicious", "admin_db", "cross-namespace access");
+      d, "malicious", "admin_db", "cross-namespace access");
     # High threat with default config (quarantine_on_high=1) → suspend
     assert_eq(action,                                 QA_SUSPEND, "Suspend on High");
     assert_eq(aegis_is_quarantined(d, "malicious"),  1,          "malicious quarantined");
     var events = aegis_events_for_agent(d, "malicious");
     assert_eq(vec_len(events),                          1, "one event recorded");
     assert_eq(event_kind(vec_get(events, 0)),
-    EV_DATABASE_ACCESS_VIOLATION, "kind = database_access_violation");
+      EV_DATABASE_ACCESS_VIOLATION, "kind = database_access_violation");
     return 0;
 }
 
@@ -732,8 +732,8 @@ fn test_ktr_json_roundtrip() {
 fn test_finding_json_roundtrip() {
     test_group("finding_json_roundtrip");
     var f = finding_new(THREAT_HIGH, str_from("missing_binary"),
-    str_from("Binary not found at /tmp/x"),
-    str_from("Verify install"));
+      str_from("Binary not found at /tmp/x"),
+      str_from("Verify install"));
     var json = finding_to_json(f);
     var f2 = finding_from_json(json);
     assert_neq(f2, 0, "non-null parse");
@@ -777,10 +777,10 @@ fn test_aegis_config_json_auto_release_none() {
     var json = aegis_config_to_json(c);
     # Output should serialize to JSON null, not -1
     assert_eq(str_contains(json, str_from("\"auto_release_timeout_secs\":null")), 1,
-    "None serializes as null");
+      "None serializes as null");
     var c2 = aegis_config_from_json(json);
     assert_eq(aegis_config_auto_release_timeout_secs(c2), AEGIS_AUTO_RELEASE_NONE,
-    "null round-trips back to AEGIS_AUTO_RELEASE_NONE");
+      "null round-trips back to AEGIS_AUTO_RELEASE_NONE");
     return 0;
 }
 
@@ -836,10 +836,10 @@ fn test_quarantine_entry_json_auto_release_none() {
     var q = aegis_quarantine_agent(d, "agent-r", "test", THREAT_HIGH);
     var json = quarantine_entry_to_json(q);
     assert_eq(str_contains(json, str_from("\"auto_release_at\":null")), 1,
-    "None serializes as null");
+      "None serializes as null");
     var q2 = quarantine_entry_from_json(json);
     assert_eq(q_auto_release_at(q2), AEGIS_AUTO_RELEASE_NONE,
-    "null round-trips to AEGIS_AUTO_RELEASE_NONE");
+      "null round-trips to AEGIS_AUTO_RELEASE_NONE");
     return 0;
 }
 
@@ -849,7 +849,7 @@ fn test_security_event_json_roundtrip() {
     var json = security_event_to_json(ev);
     # Spot-check: PascalCase event_type label
     assert_eq(str_contains(json, str_from("\"event_type\":\"SandboxEscape\"")), 1,
-    "event_type renders as PascalCase variant");
+      "event_type renders as PascalCase variant");
     var ev2 = security_event_from_json(json);
     assert_neq(ev2, 0, "non-null parse");
     assert_eq(event_kind(ev2),                           EV_SANDBOX_ESCAPE, "kind");
@@ -1129,21 +1129,21 @@ fn test_p1_max_events_clamped() {
     var c0 = aegis_config_from_json(str_from("{\"max_events\":42}"));
     assert_neq(c0, 0, "tiny config parse returns non-null");
     assert_eq(aegis_config_max_events(c0), 42,
-    "small max_events round-trips");
+      "small max_events round-trips");
     # Above hard cap (1M) → clamped.
     var c = aegis_config_from_json(str_from("{\"max_events\":5000000}"));
     assert_neq(c, 0, "above-cap config parse returns non-null");
     assert_eq(aegis_config_max_events(c), AEGIS_MAX_EVENTS_HARD_CAP,
-    "above-cap max_events clamped to hard cap");
+      "above-cap max_events clamped to hard cap");
     # Negative or zero → default (10000).
     var c2 = aegis_config_from_json(str_from("{\"max_events\":-1}"));
     assert_eq(aegis_config_max_events(c2), 10000,
-    "negative max_events → default");
+      "negative max_events → default");
     # Setter clamp (defense-in-depth).
     var c3 = aegis_config_default();
     aegis_config_set_max_events(c3, 5000000);
     assert_eq(aegis_config_max_events(c3), AEGIS_MAX_EVENTS_HARD_CAP,
-    "setter clamp also fires");
+      "setter clamp also fires");
     return 0;
 }
 
@@ -1153,15 +1153,15 @@ fn test_p1_auto_release_timeout_clamped() {
     # Negative non-sentinel → AEGIS_AUTO_RELEASE_NONE (default).
     var c = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":-86400}"));
     assert_eq(aegis_config_auto_release_timeout_secs(c), AEGIS_AUTO_RELEASE_NONE,
-    "negative non-sentinel timeout → AUTO_RELEASE_NONE");
+      "negative non-sentinel timeout → AUTO_RELEASE_NONE");
     # -1 sentinel preserved.
     var c2 = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":-1}"));
     assert_eq(aegis_config_auto_release_timeout_secs(c2), AEGIS_AUTO_RELEASE_NONE,
-    "-1 sentinel preserved");
+      "-1 sentinel preserved");
     # Above hard cap → clamped.
     var c3 = aegis_config_from_json(str_from("{\"auto_release_timeout_secs\":50000000}"));
     assert_eq(aegis_config_auto_release_timeout_secs(c3), AEGIS_TIMEOUT_HARD_CAP,
-    "huge timeout clamped to TIMEOUT_HARD_CAP");
+      "huge timeout clamped to TIMEOUT_HARD_CAP");
     return 0;
 }
 
@@ -1170,10 +1170,10 @@ fn test_p1_periodic_interval_clamped() {
     test_group("p1_periodic_interval_clamped");
     var c = aegis_config_from_json(str_from("{\"periodic_scan_interval_secs\":-1}"));
     assert_eq(aegis_config_periodic_scan_interval_secs(c), 0,
-    "negative interval → 0");
+      "negative interval → 0");
     var c2 = aegis_config_from_json(str_from("{\"periodic_scan_interval_secs\":50000000}"));
     assert_eq(aegis_config_periodic_scan_interval_secs(c2), AEGIS_TIMEOUT_HARD_CAP,
-    "huge interval clamped to TIMEOUT_HARD_CAP");
+      "huge interval clamped to TIMEOUT_HARD_CAP");
     return 0;
 }
 
@@ -1182,19 +1182,19 @@ fn test_p1_firewall_rejects_bad_agent_id() {
     test_group("p1_firewall_rejects_bad_agent_id");
     # Newline injection (iptables-save comment write-primitive class).
     assert_eq(aegis_isolate_agent("bad\nname", "10.0.0.1"), 0,
-    "agent_id with newline rejected");
+      "agent_id with newline rejected");
     # Semicolon (token break).
     assert_eq(aegis_isolate_agent("bad;drop", "10.0.0.1"), 0,
-    "agent_id with semicolon rejected");
+      "agent_id with semicolon rejected");
     # Empty.
     assert_eq(aegis_isolate_agent("", "10.0.0.1"), 0,
-    "empty agent_id rejected");
+      "empty agent_id rejected");
     # Over-length (55 chars exceeds 54 cap).
     assert_eq(aegis_isolate_agent("a234567890123456789012345678901234567890123456789012345", "10.0.0.1"), 0,
-    "over-length agent_id rejected");
+      "over-length agent_id rejected");
     # Brace.
     assert_eq(aegis_rate_limit_agent("agent{}", "10.0.0.1", 100), 0,
-    "agent_id with brace rejected (rate-limit path)");
+      "agent_id with brace rejected (rate-limit path)");
     return 0;
 }
 
@@ -1203,18 +1203,18 @@ fn test_p1_firewall_rejects_bad_agent_addr() {
     test_group("p1_firewall_rejects_bad_agent_addr");
     # Newline injection.
     assert_eq(aegis_isolate_agent("agent-1", "10.0.0.1\ndrop"), 0,
-    "agent_addr with newline rejected");
+      "agent_addr with newline rejected");
     # Space.
     assert_eq(aegis_isolate_agent("agent-1", "10.0.0.1 drop"), 0,
-    "agent_addr with space rejected");
+      "agent_addr with space rejected");
     # Empty.
     assert_eq(aegis_isolate_agent("agent-1", ""), 0,
-    "empty agent_addr rejected");
+      "empty agent_addr rejected");
     # rate_limit also enforces pps > 0.
     assert_eq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 0), 0,
-    "rate_limit with pps=0 rejected");
+      "rate_limit with pps=0 rejected");
     assert_eq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 0 - 1), 0,
-    "rate_limit with negative pps rejected");
+      "rate_limit with negative pps rejected");
     return 0;
 }
 
@@ -1223,15 +1223,15 @@ fn test_p1_firewall_rejects_bad_agent_addr() {
 fn test_p1_firewall_accepts_good_input() {
     test_group("p1_firewall_accepts_good_input");
     assert_neq(aegis_isolate_agent("agent-1", "10.0.0.1"), 0,
-    "valid IPv4 isolate accepted");
+      "valid IPv4 isolate accepted");
     assert_neq(aegis_isolate_agent("a.b_c-1", "10.0.0.1/24"), 0,
-    "valid mixed-id + CIDR accepted");
+      "valid mixed-id + CIDR accepted");
     assert_neq(aegis_isolate_agent("agent-1", "fe80::1"), 0,
-    "valid IPv6 accepted");
+      "valid IPv6 accepted");
     assert_neq(aegis_isolate_agent("agent-1", "fe80::1/128"), 0,
-    "valid IPv6/128 accepted");
+      "valid IPv6/128 accepted");
     assert_neq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 100), 0,
-    "valid rate_limit accepted");
+      "valid rate_limit accepted");
     return 0;
 }
 
@@ -1254,11 +1254,11 @@ fn test_p1_json_oversize_rejected() {
     var huge = str_builder_build(sb);
     # Each of the 8 record parsers should reject without crashing.
     assert_eq(security_event_from_json(str_data(huge)), 0,
-    "oversize JSON rejected by security_event_from_json");
+      "oversize JSON rejected by security_event_from_json");
     assert_eq(quarantine_entry_from_json(str_data(huge)), 0,
-    "oversize JSON rejected by quarantine_entry_from_json");
+      "oversize JSON rejected by quarantine_entry_from_json");
     assert_eq(aegis_config_from_json(str_data(huge)), 0,
-    "oversize JSON rejected by aegis_config_from_json");
+      "oversize JSON rejected by aegis_config_from_json");
     return 0;
 }
 
@@ -1274,16 +1274,16 @@ fn test_p1_quarantine_rejects_bad_agent_id() {
     var d = aegis_new(aegis_config_default());
     # Newline injection.
     assert_eq(aegis_quarantine_agent(d, "bad\nname", "x", THREAT_HIGH), 0,
-    "agent_id with newline rejected");
+      "agent_id with newline rejected");
     # Empty.
     assert_eq(aegis_quarantine_agent(d, "", "x", THREAT_HIGH), 0,
-    "empty agent_id rejected");
+      "empty agent_id rejected");
     # Slash (path-traversal flavor).
     assert_eq(aegis_quarantine_agent(d, "../etc/passwd", "x", THREAT_HIGH), 0,
-    "agent_id with slash rejected");
+      "agent_id with slash rejected");
     # Quote.
     assert_eq(aegis_quarantine_agent(d, "agent\"x", "x", THREAT_HIGH), 0,
-    "agent_id with quote rejected");
+      "agent_id with quote rejected");
     return 0;
 }
 
@@ -1295,9 +1295,9 @@ fn test_p1_quarantine_release_rejects_bad() {
     assert_eq(aegis_is_quarantined(d, "alice"), 1, "alice quarantined");
     # Release with bad id should be rejected, alice still quarantined.
     assert_eq(aegis_release_agent(d, "alice\n"), 0,
-    "release with newline rejected");
+      "release with newline rejected");
     assert_eq(aegis_is_quarantined(d, "alice"), 1,
-    "alice still quarantined after bad release");
+      "alice still quarantined after bad release");
     # Valid release works.
     assert_eq(aegis_release_agent(d, "alice"), 1, "valid release succeeds");
     assert_eq(aegis_is_quarantined(d, "alice"), 0, "alice released");
@@ -1309,9 +1309,9 @@ fn test_p1_quarantine_is_get_reject_bad() {
     var d = aegis_new(aegis_config_default());
     aegis_quarantine_agent(d, "alice", "x", THREAT_HIGH);
     assert_eq(aegis_is_quarantined(d, "alice;drop"), 0,
-    "is_quarantined rejects semicolon");
+      "is_quarantined rejects semicolon");
     assert_eq(aegis_get_quarantine(d, "alice;drop"), 0,
-    "get_quarantine rejects semicolon");
+      "get_quarantine rejects semicolon");
     # Empty also rejected.
     assert_eq(aegis_is_quarantined(d, ""), 0, "is_quarantined rejects empty");
     assert_eq(aegis_get_quarantine(d, ""), 0, "get_quarantine rejects empty");
@@ -1324,14 +1324,14 @@ fn test_p1_quarantine_is_get_reject_bad() {
 fn test_p1_security_event_strips_bad_agent_id() {
     test_group("p1_security_event_strips_bad_agent_id");
     var ev = security_event_new(EV_SANDBOX_ESCAPE, "src", "bad\nid",
-    THREAT_CRITICAL, "boom");
+      THREAT_CRITICAL, "boom");
     assert_neq(ev, 0, "event still constructed");
     assert_eq(event_agent_id(ev), 0, "bad agent_id stripped to null");
     # Auto-quarantine path then sees no agent_id → no quarantine fires.
     var d = aegis_new(aegis_config_default());
     var action = aegis_report_event(d, ev);
     assert_eq(action, QA_NONE,
-    "Critical event with stripped agent_id → no auto-quarantine");
+      "Critical event with stripped agent_id → no auto-quarantine");
     assert_eq(aegis_total_events(d), 1, "event still recorded");
     return 0;
 }
@@ -1381,14 +1381,17 @@ fn test_p1_scan_refuses_to_follow_symlink() {
     # the link's target on its behalf.
     var r2 = aegis_scan_agent(d, "agent-link", link);
     assert_eq(scan_clean(r2), 0,
-    "symlink scan is NOT clean (would be clean pre-0.9.5)");
+      "symlink scan is NOT clean (would be clean pre-0.9.5)");
     assert_eq(_findings_have_category(scan_findings(r2), "unreadable_metadata"), 1,
-    "symlink path surfaces unreadable_metadata finding");
+      "symlink path surfaces unreadable_metadata finding");
 
     _tmp_unlink(link);
     _tmp_unlink(target);
     return 0;
 }
 
+# Clamp: the process exit status is 8-bit, so returning assert_summary()'s
+# raw failure count reports exactly 256 / 512 / 768 failures as SUCCESS.
 var exit_code = main();
+if (exit_code > 0) { exit_code = 1; }
 syscall(60, exit_code);

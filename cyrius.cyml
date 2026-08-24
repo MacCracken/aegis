@@ -4,77 +4,43 @@ version = "${file:VERSION}"
 description = "aegis — security daemon for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.4.66"
+cyrius = "6.5.35"
 
 [build]
 entry = "src/main.cyr"
 output = "aegis"
 
-[deps]
-# 6.2.x stdlib reorg: the standalone `json` module (with base64/csv/toml)
-# folded into the bundled `bayan` distribution module, so `json` → `bayan`.
-# bayan re-exports the full json_v_* value API aegis serdes through. Matches
-# the agnostik 1.3.1 / sigil 6.2.1 toolchain-refresh migration.
+# This file is a build manifest — declarations only. Why each dep is here
+# and what aegis calls from it: docs/development/state.md, Dependencies.
+# What changed between versions: CHANGELOG.md.
 #
-# The tail block (`thread` onward) exists ONLY to satisfy the nein 1.6.4
-# transitive dist-dep closure — none of these symbols are referenced by
-# aegis's own source or by the firewall path of `dist/nein.cyr` (all
-# DCE-dropped). `cyrius lib sync` must still copy them into `./lib/` so the
-# git-dep resolve can satisfy each bundle's `.deps` sidecar:
-#   - `thread` / `thread_local` — nein's `dist/nein.deps` fold requirements.
-#   - `freelist` / `fs` / `process` / `ct` / `keccak` / `slice` — libro's
-#     `dist/libro.deps` sidecar (libro is nein's audit-chain transitive; see
-#     [deps.libro] below). The rest of libro's sidecar (sakshi/chrono/tagged/
-#     bayan/hashmap/…) is already covered by aegis's own needs above.
-#   - `sync` — patra's `dist/patra.deps` sidecar (patra is nein's audit-chain
-#     transitive; `atomic`/`thread_local` from that sidecar are already present).
-# `bote-core`'s sidecar (hashmap+bayan) is likewise already covered.
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr", "sakshi", "bayan", "random", "thread", "thread_local", "freelist", "fs", "process", "ct", "keccak", "slice", "sync"]
+# `path` is a local dev override. When the sibling checkout exists it
+# shadows `tag` outright; CI has no siblings and resolves `tag` from git.
+# Both must stay correct.
+[deps]
+# Modules aegis source includes directly — every `include "lib/X.cyr"` in
+# src/ must have its X listed here. Transitive requirements are not declared
+# here: `cyrius deps` reads each dep's own manifest and the `.deps` sidecar
+# beside its dist bundle, and resolves those itself.
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "tagged", "chrono", "hashmap", "bench", "fnptr", "sakshi", "bayan", "random", "process", "fs"]
 
+# agent_id_new (UUID v4 over getrandom) from types; the
+# stik_err_invalid_argument / stik_err_io constructors from error.
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
-tag = "1.3.4"
+tag = "1.4.0"
 modules = ["src/types.cyr", "src/error.cyr"]
 
-# ── nein 1.6.x transitive dist deps (libro, bote) ────────────────
-# aegis consumes ONLY nein's firewall bundle, but the nein 1.6.x source
-# graph (resolved via the `path` dev override) declares audit-chain +
-# MCP deps for nein's own full build. Declaring each transitive bundle as
-# a self-contained top-level DIST dep makes the resolver use that bundle's
-# `.deps` sidecar instead of walking the dep's SOURCE graph — the same
-# short-circuit stiva uses. All three are DCE-dropped dead code for aegis
-# (the firewall path references no libro/bote symbol). Declared before nein
-# for single-pass forward-ref resolution.
-
-# libro — nein's audit-chain transitive (nein's own audit store). The
-# self-contained `dist/libro.cyr` folds patra, so declaring it here stops
-# the resolver walking libro→patra from source. Its sidecar's extra stdlib
-# (freelist/fs/process/ct/keccak/slice) is added to [deps].stdlib above.
-[deps.libro]
-git = "https://github.com/MacCracken/libro.git"
-path = "../libro"
-tag = "2.8.2"
-modules = ["dist/libro.cyr"]
-
-# bote MCP core — satisfies nein's `dist/nein.deps` `bote-core` fold
-# requirement. `dist/bote-core.cyr` is self-contained (sidecar: hashmap+
-# bayan, already in [deps].stdlib).
-[deps.bote]
-git = "https://github.com/MacCracken/bote.git"
-path = "../bote"
-tag = "3.1.4"
-modules = ["dist/bote-core.cyr"]
-
-# Firewall enforcement for QA_ISOLATE / QA_RATELIMIT quarantine actions.
-# nein 1.6.4 ships a single-file dist bundle that exposes the
-# table_/chain_/rule_/match_/verdict_ API used by src/firewall.cyr. The
-# 1.6.x line kept that firewall API byte-identical (383 public fns stable)
-# and added MCP + Ed25519-signing surfaces aegis does not touch; its
-# `dist/nein.deps` sidecar declares thread/thread_local/bote-core fold
-# requirements (satisfied via [deps].stdlib + [deps.bote] above).
+# nftables ruleset generation for the QA_ISOLATE / QA_RATELIMIT quarantine
+# actions and the hardened-host baseline. src/firewall.cyr calls the
+# firewall_ / table_ / chain_ / rule_ / match_ / verdict_ surface of the
+# single-file dist bundle. nein pins its own audit-chain and MCP
+# transitives (libro, majra, bote-core, sigil, patra) in its manifest;
+# `cyrius deps` walks that graph, so aegis declares none of them. None is
+# reachable from the firewall path — all are DCE-dropped.
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
 path = "../nein"
-tag = "1.6.4"
+tag = "1.6.10"
 modules = ["dist/nein.cyr"]

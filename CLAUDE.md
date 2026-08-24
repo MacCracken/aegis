@@ -72,7 +72,7 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 
 Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. Subsequent runs pair with each minor cut.
 
-1. **Cleanliness** — `./scripts/audit.sh` green; `cyrius lint`, `cyrius vet`, `cyrius fmt` clean.
+1. **Cleanliness** — `./scripts/audit.sh` green; `cyrius lint`, `cyrius vet`, `cyrius fmt --check` clean. (`cyrius fmt <file>` without `--check` rewrites in place from 6.5.x on — use `--check` in any gate.)
 2. **Benchmark baseline** — `cyrius bench tests/aegis.bcyr`; append to `bench-history.csv`.
 3. **Internal review** — gaps, optimizations, correctness, doc currency.
 4. **Security audit** — input handling, syscall usage, buffer sizes; log findings under `docs/audit/YYYY-MM-DD-audit.md` if surfaced.

@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — aegis
 
-> **Last refresh**: 2026-07-17 (1.1.4 cyrius `6.4.66` + dependency refresh — `state.md` Version/Toolchain/Dependencies cells, `CHANGELOG.md` `[1.1.4]`, `CONTRIBUTING.md` cyrius prereq, `VERSION`; no aegis source touched) · 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-08-24 (1.1.5 cyrius `6.5.35` + dependency refresh + `cyrius.cyml` comment cleanup — `VERSION`, `cyrius.cyml`, `CHANGELOG.md` `[1.1.5]`, `state.md` (Version/Toolchain/Source/Tests/Dependencies/API-surface/Next), `README.md` (Status, surface, layout), `CONTRIBUTING.md` (cyrius prereq, fmt commands, src/pam.cyr), `scripts/audit.sh` + `.github/workflows/ci.yml` fmt gate, `bench-history.csv`; `src/lib.cyr` + `tests/aegis.tcyr` reformatted, no logic touched) · 2026-07-17 (1.1.4 cyrius `6.4.66` + dependency refresh — `state.md` Version/Toolchain/Dependencies cells, `CHANGELOG.md` `[1.1.4]`, `CONTRIBUTING.md` cyrius prereq, `VERSION`; no aegis source touched) · 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`aegis`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo cyrius pin / nein pin / agnostik pin lives in [`development/state.md`](development/state.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Aegis owns security policy enforcement for the AGNOS stack — wire shape (records, JSON serde, firewall ruleset format) is consumed by daimon / argonaut, so doc currency on the public surface carries weight. The doc surface is small (~18 files); most are load-bearing.
@@ -43,13 +43,15 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-05-10 | ✅ Fresh | Status block at 1.0.0 first-stable; API list covers all 151 public fns (records / enums / daemon API / firewall surface / ring primitive); project-layout reflects current src/ + docs/. |
-| `CHANGELOG.md` | 2026-07-17 | ✅ Fresh | Source of truth for shipped work. Entries through 1.1.4 (toolchain `6.4.66` + agnostik 1.3.4 / nein 1.6.4 dep refresh). Historical entries preserved verbatim — they describe past releases accurately. |
-| `CLAUDE.md` | 2026-05-10 | ✅ Fresh | Durable rules. P(-1) Hardening framing updated post-1.0.0 cut to drop "pre-1.0.0 sweep" wording. |
-| `CONTRIBUTING.md` | 2026-07-17 | ✅ Fresh | Cyrius prereq points at `6.4.66` (bumped from `6.2.11` at the 1.1.4 refresh); src/firewall.cyr in the surface map; rust-old parity-oracle guidance dropped (0.9.1) and replaced with an ADR rule for wire-shape divergences. |
+| `README.md` | 2026-08-24 | ✅ Fresh | Status block reframed to 1.1.5 (was still claiming 1.0.0 first-stable); surface paragraph now distinguishes the frozen 151-fn v1.0 snapshot from the live 210-fn surface; `src/pam.cyr` added to project layout. |
+| `CHANGELOG.md` | 2026-08-24 | ✅ Fresh | Source of truth for shipped work. Entries through 1.1.5 (toolchain `6.5.35`, agnostik 1.4.0 / nein 1.6.10, transitive-dep workaround removed, fmt gate fixed). Historical entries preserved verbatim — they describe past releases accurately. |
+| `CLAUDE.md` | 2026-08-24 | ✅ Fresh | Durable rules. P(-1) Cleanliness step now says `cyrius fmt --check` — plain `cyrius fmt` rewrites in place from 6.5.x on and cannot be used as a gate. |
+| `CONTRIBUTING.md` | 2026-08-24 | ✅ Fresh | Cyrius prereq points at `6.5.35`; `cyrius fmt` row split into in-place + `--check` for 6.5.x semantics; `src/pam.cyr` added to the surface map; ADR rule for wire-shape divergences. |
 | `SECURITY.md` | 2026-05-10 | ✅ Fresh | Reporting policy + scope. Out-of-scope "firewall integration" bullet dropped in 0.9.1 (no longer accurate since 0.9.0). |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. Re-read annually. |
-| `VERSION` | 2026-07-17 | ✅ Fresh | `1.1.4` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-08-24 | ✅ Fresh | `1.1.5` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `cyrius.cyml` | 2026-08-24 | ✅ Fresh | Build manifest. Rewritten at 1.1.5 to declarations-only: the release-by-release rationale ledger it had accumulated moved to `state.md` (Dependencies) and `CHANGELOG.md`, and the comments now point there. Tracked here because its comments are documentation and had gone stale. |
+| `scripts/audit.sh` · `.github/workflows/ci.yml` | 2026-08-24 | ✅ Fresh | Quality gates. At 1.1.5: fmt gate rewritten for 6.5.x's `cyrius fmt --check` (the old stdout-diff idiom silently mis-reported *and* mutated); the **test gate was fixed to actually fail** (it piped through `tail`, so the pipeline status was tail's); the lint gate no longer aborts the script under `set -e`. Their inline comments are the reference for what each gate does. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
 
 ---
@@ -58,7 +60,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `state.md` | 2026-07-17 | ✅ Fresh | Live volatile state — VERSION line (`1.1.4`), cyrius pin (`6.4.66`), dep tags (agnostik 1.3.4 / nein 1.6.4 + libro 2.8.2 / bote 3.1.4 transitive), source layout, test count, dependency block. Refreshed every release. |
+| `state.md` | 2026-08-24 | ✅ Fresh | Live volatile state — VERSION (`1.1.5`), cyrius pin (`6.5.35`), dep tags (agnostik 1.4.0 / nein 1.6.10; transitives now resolved from nein's manifest, not declared here), source layout incl. `src/pam.cyr`, test count, bench baseline, new **API surface** section (210 fns vs the 151-fn snapshot), rewritten **Next**. Now the doc `cyrius.cyml` points at for dep rationale. |
 | `roadmap.md` | 2026-05-10 | ✅ Fresh | **Stripped to forward-looking only at 1.0.0**. Shipped milestones live in CHANGELOG (per first-party-doc convention); roadmap holds post-1.0 backlog only. |
 | `api-surface-1.0.snapshot` | 2026-05-10 | ✅ Fresh — auto-gated | Machine-checkable companion (one `module::fn/arity` line per public fn, 151 lines). **SemVer-stable contract from 1.0.0.** CI gate `scripts/check-api-surface.sh` diffs against this; unannounced additions/removals fail the build. |
 
@@ -95,6 +97,8 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 |---|---|---|---|
 | `docs/guides/getting-started.md` | 2026-05-10 | ✅ Fresh | Build / layout / add-a-feature flow. rust-old references dropped 0.9.1; `src/firewall.cyr` added to layout. |
 | `docs/examples/basic_consumer.cyr` | 2026-05-10 | ✅ Fresh | Stand-in downstream consumer (new in 0.9.2). Exercises the public surface end-to-end: aegis_new → report critical event → quarantine → firewall builder → render → validate. Builds clean. Not a real daimon, but proves nothing essential is private-by-accident. Stays as a teaching artifact post-1.0; reconsider when a real consumer lands. |
+
+| `tests/aegis.tcyr` | 2026-08-24 | ✅ Fresh | 326 assertions / 92 groups. Reformatted at 1.1.5 for 6.5.x paren-continuation indent, and the epilogue now clamps the exit status — it returned `assert_summary()`'s raw failure count, and exit status is 8-bit, so exactly 256 / 512 / 768 failures would have reported success. |
 
 ## Tier 6 — Audit reports (`docs/audit/`)
 
@@ -160,4 +164,4 @@ This file's refresh cadence is **opportunistic** (touched when other docs are to
 
 ---
 
-*Last refresh: 2026-05-10 (1.0.0 cut + post-cut doc sweep). Refresh in place when docs are touched.*
+*Last refresh: 2026-08-24 (1.1.5 toolchain + dependency refresh and manifest cleanup). Refresh in place when docs are touched.*

@@ -7,6 +7,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-08-24
+
+Toolchain + dependency refresh onto the current AGNOS stack, plus a
+manifest cleanup. Cyrius `6.4.66` → `6.5.35`, agnostik `1.3.4` → `1.4.0`,
+nein `1.6.4` → `1.6.10`. **No behavioural change to aegis** — the public
+surface, every wire format, and the firewall ruleset shape are unchanged;
+326 assertions pass on the new stack.
+
+The substantive part of this cut is that the nein-transitive dependency
+workaround carried since 1.1.4 is **gone** — it was never load-bearing, and
+it was actively harmful. Cross-bundle duplicate-symbol warnings drop from
+**234 to 2**.
+
+### Changed
+
+- **Cyrius toolchain pin: 6.4.66 → 6.5.35.** Clears the manifest-pin
+  drift — the installed wrapper was already 6.5.35, and aegis did not
+  build clean against it (see Fixed below).
+- **Dependency: agnostik 1.3.4 → 1.4.0.** Purely additive across the two
+  modules aegis includes: 66 → 69 public fns, three added
+  (`agnostik_err_kind_parse`, `message_type_parse`, `system_status_parse`),
+  none removed, no signature changed. The three symbols aegis calls —
+  `agent_id_new()`, `stik_err_invalid_argument(msg: Str)`,
+  `stik_err_io(msg: Str)` — are byte-identical.
+- **Dependency: nein 1.6.4 → 1.6.10.** Also purely additive on the surface
+  `src/firewall.cyr` consumes: 100 → 104 `firewall_*` / `table_*` / `chain_*` /
+  `rule_*` / `match_*` / `verdict_*` fns, four added (`firewall_deduplicate`,
+  `rule_matching_addrs`, `rule_matching_addrs6`, `rule_matching_ports`), none
+  removed, no signature changed. All 19 symbols `src/firewall.cyr` calls are
+  present; the file needed no edits. (The dist bundle overall goes 359 → 370
+  public fns — earlier docs in this repo cited "383 public fns stable" for the
+  1.6.x line; that figure was never right and is not repeated here.)
+- **`cyrius.cyml` is declarations only.** The manifest carried a
+  release-by-release rationale ledger — stdlib-reorg history, per-module
+  transitive-closure derivations, dep-version deltas. That is CHANGELOG and
+  `state.md` material. Comments are now short statements of what each
+  stanza is for, pointing at `docs/development/state.md` (Dependencies) for
+  rationale and `CHANGELOG.md` for history.
+- **Reformatted `src/lib.cyr` and `tests/aegis.tcyr`** to 6.5.x canonical
+  continuation indent (2 spaces per open paren). Whitespace only —
+  111 lines, line-for-line, no token changes.
+
+### Removed
+
+- **`[deps.libro]` and `[deps.bote]` declarations.** Added at 1.1.4 to
+  short-circuit nein's source-graph walk — but `cyrius deps` has drained
+  each resolved dep's own manifest since **cyrius v5.7.14**, so the
+  short-circuit was never needed. (Confirmed: the pre-bump `cyrius.lock`
+  already contained `majra`, `sigil`, `patra`, and `bote-core`, none of
+  which aegis declared.) What the declarations *did* do was pin aegis's own
+  libro alongside nein's, pulling libro's **thin sigil sub-bundles**
+  (`sigil_hex`, `sigil_sha256`, `sigil_sha_ni`, `sigil-mldsa`) into the same
+  translation unit as nein's **full** `sigil` pin — 232 of the 234
+  duplicate-symbol warnings. Dropping them leaves nein's pins to win, and
+  **2 warnings remain**: `majra._sub_new` vs `libro._sub_new`, and
+  `sigil._hex_nibble` vs `agnostik_types._hex_nibble` — both benign
+  last-definition-wins, both in DCE-dropped code.
+- **Seven of the nine transitive-only `[deps].stdlib` entries** —
+  `thread`, `thread_local`, `freelist`, `ct`, `keccak`, `slice`, `sync`.
+  Declared at 1.1.4 to satisfy dist-bundle `.deps` sidecars by hand;
+  `cyrius deps` reads those sidecars itself. **`process` and `fs` were
+  kept**: `src/pam.cyr` includes them directly, so they are aegis's own
+  requirement, not a transitive one — trimming them would have left aegis
+  source depending on nein's sidecar to supply its own includes. The list
+  is now exactly the 19 modules aegis source includes.
+
+### Security
+
+- **Picked up agnostik F-014 (medium), on aegis's own call path.** agnostik's
+  `_fill_random` used `0 - 1` as its failure sentinel and compared it signed,
+  so on failure the loop re-entered with `buf + (0 - 1)` and length `n + 1` —
+  a one-byte heap underflow write plus a non-terminating loop. It is
+  reachable from `agent_id_new()`, which aegis calls for every event ID, when
+  `getrandom(2)` short-returns *and* the `/dev/urandom` fallback then fails.
+  Fixed on agnostik's side and shipped inside the 1.4.0 tag (its CHANGELOG
+  files it under a `[1.3.7]` heading that was never tagged separately). No
+  aegis change required; noted because the bump is the delivery vehicle.
+
+### Fixed
+
+- **`cyrius fmt` gate was broken under 6.5.x.** 6.5.x changed `cyrius fmt
+  <file>` to rewrite **in place** and print nothing; the old gate diffed
+  the command's stdout against the file, so it reported *every* file as
+  drifted (and silently rewrote two of them as a side effect of running the
+  check). `scripts/audit.sh` and `.github/workflows/ci.yml` now use
+  `cyrius fmt --check <file>`, which is non-mutating and exits non-zero
+  naming the first differing line.
+- **`audit.sh`'s test gate could not fail.** `cyrius test … | tail -2` gave
+  the pipeline `tail`'s exit status (the script sets `set -e`, not
+  `pipefail`), so a red suite still reported `audit: PASSED`. The gate now
+  captures the output and branches on the runner's own status.
+- **`audit.sh`'s lint gate could abort the audit silently.** `out=$(cyrius
+  lint "$f" 2>&1)` under `set -e`: since cyrius 6.5.19 lint's syntax
+  pre-pass can exit non-zero, which would kill the script *at the
+  assignment*, before the warnings it was about to grep were ever printed.
+  Now `|| true`.
+- **`tests/aegis.tcyr` exit status truncated.** The harness returned
+  `assert_summary()`'s raw failure count as the process exit code; exit
+  status is 8-bit, so exactly 256 / 512 / 768 failing assertions would have
+  reported success. Now clamped to 1.
+- **`undefined function 'chan_try_send'` build warning.** The `thread`
+  module vendored from the 6.4.66 pin predates `chan_try_send`, which the
+  transitively-resolved `majra` bundle calls. Resolved by the pin bump —
+  6.5.35's `thread` defines it.
+
+### Performance
+
+Benchmarks on 6.5.35 (`tests/aegis.bcyr`, appended to `bench-history.csv`):
+
+| Bench | avg | min | max | iters |
+|---|---|---|---|---|
+| `aegis_next_id` | 839 ns | 772 ns | 2.029 µs | 100k |
+| `security_event_new` | 2.372 µs | 2.112 µs | 5.390 µs | 100k |
+| `aegis_report_event` | 3.253 µs | 2.981 µs | 6.543 µs | 50k |
+
+**Not comparable to the 1.0.1 row.** 6.5.x's bench harness measures a timer
+floor (1.254 µs per clock read here) and subtracts it from every sample;
+earlier rows include it and are µs-rounded. Treat this as a new baseline,
+not a speedup.
+
+### Notes
+
+- **Transitive dep versions now follow nein.** libro, majra, bote-core,
+  sigil, and patra resolve from nein 1.6.10's manifest (libro 2.8.8,
+  majra 2.6.7, bote-core 3.3.2, sigil 3.12.9, patra 1.13.9), not from
+  aegis. They are unreachable from the firewall path and DCE-dropped;
+  bumping them is nein's call, not aegis's.
+- **nein 1.6.10 pins cyrius `6.5.33`**, two patches behind aegis's `6.5.35`.
+  The `dist/nein.cyr` bundle aegis compiles was produced under a slightly
+  older toolchain than the one compiling it. Benign, and normal for the
+  stack, but worth knowing when reading nein-attributed warnings.
+- **One new benign build warning.** `./lib/ shadows version-pinned … patra
+  1.13.9 (pinned: 1.13.10)` — nein 1.6.10 pins patra one patch behind the
+  6.5.35 stdlib snapshot. patra is dead code for aegis and advancing the pin
+  is nein's call, not aegis's. Not gated by `audit.sh`.
+- **`path` shadows `tag`.** A `[deps.X]` stanza with both uses the local
+  sibling checkout outright and ignores the tag — verified by pointing
+  agnostik at 1.3.4 with the override in place and getting 1.4.0 content.
+  CI has no siblings and resolves the tag, so both must stay correct.
+- **API-surface snapshot is stale, deliberately.** `cyrius api-surface`
+  reports 210 public fns against a 151-fn snapshot — 59 additions, all from
+  the 1.1.x PAM fold, all pre-dating this cut. The drift gate passes
+  (additions are non-breaking under SemVer). Regenerating the v1.0 baseline
+  is a separate decision and is not made here.
+
+
 ## [1.1.4] — 2026-07-17
 
 Toolchain + dependency refresh onto the current AGNOS stack. Clears the
