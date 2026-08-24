@@ -8,25 +8,22 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**1.1.5** — current. The v1.0 contract still holds: the public API surface is
-SemVer-stable, additions are non-breaking, removals or renames need a major
-bump. 1.1.x has been the PAM fold (from the agnosys → agnodrm decomposition)
-plus toolchain and dependency refreshes; the 1.0.0 feature set is unchanged.
+**1.1.6** — current. The public API surface is SemVer-stable: additions are
+non-breaking, removals or renames need a major bump. 1.1.x has been the PAM fold
+(from the agnosys → agnodrm decomposition), toolchain and dependency refreshes,
+and — at 1.1.6 — a P(-1) hardening pass that closed 18 findings, four of them
+HIGH. See [`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md).
 
 Shipped surface: nein firewall integration (`aegis_isolate_agent` /
 `aegis_rate_limit_agent` / `aegis_hardened_host` + render/validate wrappers),
 JSON serde for all 8 records, sakshi-full structured logging, fixed-cap
-ring-buffer events log, boundary-validated API (whitelist on `agent_id` +
-`agent_addr`; clamps on JSON-deserialized config; no-follow-symlink scanner),
-and the `pam_*` surface in `src/pam.cyr`. All 9 P(-1) audit findings closed —
-see [`docs/audit/2026-05-10-audit.md`](docs/audit/2026-05-10-audit.md).
+ring-buffer events log, boundary-validated API (allowlists on `agent_id`,
+`agent_addr`, PAM module / arg / service-name; clamps on every JSON-deserialized
+integer; no-follow-symlink scanner and PAM readers), and the `pam_*` surface in
+`src/pam.cyr`.
 
-**326 passed / 0 failed** across 92 test groups + 1000-iter fuzz on every JSON
-parser. `cyrius api-surface --scope=project` reports 210 public fns against the
-151-fn v1.0 snapshot at
-[`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot)
-— the 59 additions are the PAM fold and are non-breaking; live counts and
-toolchain/dependency pins are in
+**414 passed / 0 failed** across 104 test groups + 1000-iter fuzz on every JSON
+parser. Live counts and toolchain/dependency pins are in
 [`docs/development/state.md`](docs/development/state.md).
 
 ## Quick Start
@@ -82,7 +79,7 @@ Ring primitive (events log; cap captured at `aegis_new` time — see [ADR 0005](
 
 JSON serde — every record gains `<name>_to_json` / `<name>_from_json` (rendered) plus `<name>_to_json_v` / `<name>_from_json_v` (typed-value tree). Wire format is consumed by daimon / argonaut; field names are snake_case and enum variants are PascalCase.
 
-The v1.0 SemVer-stable contract — 151 public fns, machine-checkable — lives at [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot); CI gates additions and removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh). The current surface is 210 fns: the 59 `pam_*` additions from the 1.1.x PAM fold are non-breaking and the snapshot has deliberately not been regenerated (see [`state.md`](docs/development/state.md), API surface).
+The frozen public surface — **214 public fns**, machine-checkable — lives at [`docs/development/api-surface.snapshot`](docs/development/api-surface.snapshot); CI gates additions and removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh). Additions are non-breaking; removals or renames need a major bump.
 
 ## Project Layout
 

@@ -6,7 +6,7 @@ type: state
 
 # Documentation Health — aegis
 
-> **Last refresh**: 2026-08-24 (1.1.5 cyrius `6.5.35` + dependency refresh + `cyrius.cyml` comment cleanup — `VERSION`, `cyrius.cyml`, `CHANGELOG.md` `[1.1.5]`, `state.md` (Version/Toolchain/Source/Tests/Dependencies/API-surface/Next), `README.md` (Status, surface, layout), `CONTRIBUTING.md` (cyrius prereq, fmt commands, src/pam.cyr), `scripts/audit.sh` + `.github/workflows/ci.yml` fmt gate, `bench-history.csv`; `src/lib.cyr` + `tests/aegis.tcyr` reformatted, no logic touched) · 2026-07-17 (1.1.4 cyrius `6.4.66` + dependency refresh — `state.md` Version/Toolchain/Dependencies cells, `CHANGELOG.md` `[1.1.4]`, `CONTRIBUTING.md` cyrius prereq, `VERSION`; no aegis source touched) · 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
+> **Last refresh**: 2026-08-24 (1.1.6 P(-1) hardening pass — new `audit/2026-08-24-audit.md` (18 findings F-10..F-27, all fixed); `api-surface-1.0.snapshot` regenerated at 214 fns and **renamed** to `api-surface.snapshot`; `src/lib.cyr` + `src/pam.cyr` + all three test harnesses changed; `state.md` Version/Source/Tests/API-surface, `CHANGELOG.md` `[1.1.6]`, `README.md`, `CLAUDE.md`, `roadmap.md`, `bench-history.csv`, `VERSION`) · 2026-08-24 (1.1.5 cyrius `6.5.35` + dependency refresh + `cyrius.cyml` comment cleanup — `VERSION`, `cyrius.cyml`, `CHANGELOG.md` `[1.1.5]`, `state.md` (Version/Toolchain/Source/Tests/Dependencies/API-surface/Next), `README.md` (Status, surface, layout), `CONTRIBUTING.md` (cyrius prereq, fmt commands, src/pam.cyr), `scripts/audit.sh` + `.github/workflows/ci.yml` fmt gate, `bench-history.csv`; `src/lib.cyr` + `tests/aegis.tcyr` reformatted, no logic touched) · 2026-07-17 (1.1.4 cyrius `6.4.66` + dependency refresh — `state.md` Version/Toolchain/Dependencies cells, `CHANGELOG.md` `[1.1.4]`, `CONTRIBUTING.md` cyrius prereq, `VERSION`; no aegis source touched) · 2026-06-15 (Unreleased cyrius `6.2.11` toolchain refresh) · 2026-05-10 (paired with the 1.0.0 cut + post-cut doc sweep) | **Refresh cadence**: when docs are touched, update the affected row.
 > **Scope**: This repo only (`aegis`) — root-level files (README, CHANGELOG, CLAUDE.md, etc.) plus the entire `docs/` tree. Cross-repo cyrius pin / nein pin / agnostik pin lives in [`development/state.md`](development/state.md), not here.
 
 This is a **ledger**, not a one-time audit. Rewrite-in-place as docs change. Aegis owns security policy enforcement for the AGNOS stack — wire shape (records, JSON serde, firewall ruleset format) is consumed by daimon / argonaut, so doc currency on the public surface carries weight. The doc surface is small (~18 files); most are load-bearing.
@@ -21,7 +21,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | Bucket | Count | What it means |
 |---|---|---|
-| ✅ **Fresh — touched in the 0.8.3 → 1.0.0 cycle** | 13 | `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `state.md`, `roadmap.md` (stripped to forward-only at 1.0.0), `001-cyrius-port-gaps.md`, `getting-started.md`, `doc-health.md` (this file), `api-surface-1.0.snapshot` (gates CI), `audit/2026-05-10-audit.md` (P(-1) report; all 9 findings closed), the 5 ADRs (Accepted, all stable). |
+| ✅ **Fresh — touched in the 0.8.3 → 1.0.0 cycle** | 13 | `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `state.md`, `roadmap.md` (stripped to forward-only at 1.0.0), `001-cyrius-port-gaps.md`, `getting-started.md`, `doc-health.md` (this file), `api-surface.snapshot` (gates CI), `audit/2026-05-10-audit.md` (P(-1) report; all 9 findings closed), the 5 ADRs (Accepted, all stable). |
 | 🟡 **Stale — refresh in place** | 0 | None outstanding. The 1.0.0 cut sweep closed every dangling 0.9.x reference. |
 | 🔵 **Probably evergreen** | 3 | `CODE_OF_CONDUCT.md`, `LICENSE`, `docs/adr/template.md`. No version-tied claims. Re-read pass annually (or when the ADR pattern changes). |
 | 📦 **Archive / frozen by design** | 2 | `docs/adr/README.md` + `docs/architecture/README.md` are tier index pages — frozen until a new file lands in the relevant tier. |
@@ -33,7 +33,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 - ✅ `CHANGELOG.md` — entries through 1.0.0; pre-1.0 `### Breaking` notes preserved (0.9.4 quarantine-API whitelist; 0.9.5 scanner-no-follow-symlinks).
 - ✅ `001-cyrius-port-gaps.md` — header note rewritten (rust source fully gone in 0.9.1); the `nein` row now reads "done in 0.9.0". Renamed in 0.9.2 to follow the `NNN-` numbering convention from first-party-documentation.md; `architecture/README.md` index populated.
 - ✅ `README.md` — status block refreshed across cuts, lands at 1.0.0 first-stable framing; firewall surface section added to the API list (0.9.2); project-layout drops `docs/reference/`.
-- ✅ `api-surface-1.0.snapshot` (new in 0.9.2) — committed as the v1.0 baseline; CI gate `scripts/check-api-surface.sh` fails on unannounced public-fn additions or removals. **151 fns at 1.0.0** (146 lib + 5 firewall) — now SemVer-stable.
+- ✅ `api-surface.snapshot` (new in 0.9.2, then named `api-surface-1.0.snapshot`) — committed as the v1.0 baseline; CI gate `scripts/check-api-surface.sh` fails on unannounced public-fn additions or removals. **151 fns at 1.0.0** (146 lib + 5 firewall). Regenerated and renamed at 1.1.6 — see the Tier 2 row.
 - ✅ `docs/audit/2026-05-10-audit.md` — first P(-1) audit; 9 findings closed across 0.9.3 / 0.9.4 / 0.9.5.
 - ✅ `CLAUDE.md` — Genesis link, Scaffolding section, Process section (Hardening / Work Loop / Closeout Pass) added in 0.9.2 alignment pass.
 
@@ -43,13 +43,13 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `README.md` | 2026-08-24 | ✅ Fresh | Status block reframed to 1.1.5 (was still claiming 1.0.0 first-stable); surface paragraph now distinguishes the frozen 151-fn v1.0 snapshot from the live 210-fn surface; `src/pam.cyr` added to project layout. |
-| `CHANGELOG.md` | 2026-08-24 | ✅ Fresh | Source of truth for shipped work. Entries through 1.1.5 (toolchain `6.5.35`, agnostik 1.4.0 / nein 1.6.10, transitive-dep workaround removed, fmt gate fixed). Historical entries preserved verbatim — they describe past releases accurately. |
+| `README.md` | 2026-08-24 | ✅ Fresh | Status block at 1.1.6 with the P(-1) audit link and the 414-assertion count; surface paragraph cites the regenerated 214-fn snapshot; boundary-validation list extended to the PAM allowlists. Earlier at 1.1.5: reframed from a stale 1.0.0 first-stable block; `src/pam.cyr` added to project layout. |
+| `CHANGELOG.md` | 2026-08-24 | ✅ Fresh | Source of truth for shipped work. Entries through 1.1.6 (P(-1) pass: 18 findings fixed, pam.cyr hardened, snapshot regenerated). Historical entries preserved verbatim — including the old `api-surface-1.0.snapshot` filename, which was correct when written. |
 | `CLAUDE.md` | 2026-08-24 | ✅ Fresh | Durable rules. P(-1) Cleanliness step now says `cyrius fmt --check` — plain `cyrius fmt` rewrites in place from 6.5.x on and cannot be used as a gate. |
 | `CONTRIBUTING.md` | 2026-08-24 | ✅ Fresh | Cyrius prereq points at `6.5.35`; `cyrius fmt` row split into in-place + `--check` for 6.5.x semantics; `src/pam.cyr` added to the surface map; ADR rule for wire-shape divergences. |
 | `SECURITY.md` | 2026-05-10 | ✅ Fresh | Reporting policy + scope. Out-of-scope "firewall integration" bullet dropped in 0.9.1 (no longer accurate since 0.9.0). |
 | `CODE_OF_CONDUCT.md` | 2026-04-30 | 🔵 Evergreen | Standard. Re-read annually. |
-| `VERSION` | 2026-08-24 | ✅ Fresh | `1.1.5` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
+| `VERSION` | 2026-08-24 | ✅ Fresh | `1.1.6` — single source of truth, read into `cyrius.cyml` via `${file:VERSION}`. |
 | `cyrius.cyml` | 2026-08-24 | ✅ Fresh | Build manifest. Rewritten at 1.1.5 to declarations-only: the release-by-release rationale ledger it had accumulated moved to `state.md` (Dependencies) and `CHANGELOG.md`, and the comments now point there. Tracked here because its comments are documentation and had gone stale. |
 | `scripts/audit.sh` · `.github/workflows/ci.yml` | 2026-08-24 | ✅ Fresh | Quality gates. At 1.1.5: fmt gate rewritten for 6.5.x's `cyrius fmt --check` (the old stdout-diff idiom silently mis-reported *and* mutated); the **test gate was fixed to actually fail** (it piped through `tail`, so the pipeline status was tail's); the lint gate no longer aborts the script under `set -e`. Their inline comments are the reference for what each gate does. |
 | `LICENSE` | (initial commit) | 🔵 Evergreen | GPL-3.0-only. |
@@ -60,9 +60,9 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `state.md` | 2026-08-24 | ✅ Fresh | Live volatile state — VERSION (`1.1.5`), cyrius pin (`6.5.35`), dep tags (agnostik 1.4.0 / nein 1.6.10; transitives now resolved from nein's manifest, not declared here), source layout incl. `src/pam.cyr`, test count, bench baseline, new **API surface** section (210 fns vs the 151-fn snapshot), rewritten **Next**. Now the doc `cyrius.cyml` points at for dep rationale. |
+| `state.md` | 2026-08-24 | ✅ Fresh | Live volatile state — VERSION (`1.1.6`), the 1.1.6 P(-1) summary, `src/pam.cyr` in the Source map, 414-assertion test count, rewritten API-surface section, and an allocator note for consumers. Earlier: VERSION (`1.1.5`), cyrius pin (`6.5.35`), dep tags (agnostik 1.4.0 / nein 1.6.10; transitives now resolved from nein's manifest, not declared here), source layout incl. `src/pam.cyr`, test count, bench baseline, new **API surface** section (210 fns vs the 151-fn snapshot), rewritten **Next**. Now the doc `cyrius.cyml` points at for dep rationale. |
 | `roadmap.md` | 2026-05-10 | ✅ Fresh | **Stripped to forward-looking only at 1.0.0**. Shipped milestones live in CHANGELOG (per first-party-doc convention); roadmap holds post-1.0 backlog only. |
-| `api-surface-1.0.snapshot` | 2026-05-10 | ✅ Fresh — auto-gated | Machine-checkable companion (one `module::fn/arity` line per public fn, 151 lines). **SemVer-stable contract from 1.0.0.** CI gate `scripts/check-api-surface.sh` diffs against this; unannounced additions/removals fail the build. |
+| `api-surface.snapshot` | 2026-08-24 | ✅ Fresh — auto-gated | Machine-checkable companion (one `module::fn/arity` line per public fn). **214 lines** at 1.1.6, regenerated from a stale 151 and renamed from `api-surface-1.0.snapshot` (it holds the current frozen surface, not the v1.0 one). SemVer-stable contract: additions non-breaking, removals/renames need a major bump. CI gate `scripts/check-api-surface.sh` diffs against it. |
 
 ---
 
@@ -70,7 +70,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 
 | File | Last touched | Status | Notes |
 |---|---|---|---|
-| `001-cyrius-port-gaps.md` | 2026-05-10 | ✅ Fresh | Cyrius-stdlib gotchas surfaced during the rust → cyrius port; per-row Status column shows everything covered (no rows still marked deferred at 1.0.0). Header note refreshed 0.9.1 (rust source fully gone); nein row refreshed 0.9.0 (done). Renamed from `cyrius-port-gaps.md` in 0.9.2 to follow `NNN-` convention. |
+| `001-cyrius-port-gaps.md` | 2026-08-24 | ✅ Fresh | Row 13 (Cargo `firewall` feature) rewritten at 1.1.6 — it still read "nein is deferred … decide then" although nein landed in 0.9.0. No rows remain marked deferred. Earlier: | Cyrius-stdlib gotchas surfaced during the rust → cyrius port; per-row Status column shows everything covered (no rows still marked deferred at 1.0.0). Header note refreshed 0.9.1 (rust source fully gone); nein row refreshed 0.9.0 (done). Renamed from `cyrius-port-gaps.md` in 0.9.2 to follow `NNN-` convention. |
 | `README.md` | 2026-05-10 | 📦 Tier index | Populated in 0.9.2 with the `001-cyrius-port-gaps.md` entry. Frozen until a second file lands. |
 
 ---
@@ -84,10 +84,11 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 | `0003-integer-array-threat-counts.md` | 2026-05-08 | ✅ Fresh | Accepted (0.5.0). 5-slot inline counts vs. int-keyed hashmap; PascalCase string keys on the JSON wire. |
 | `0004-hashmap-flavor-selection.md` | 2026-05-08 | ✅ Fresh | Accepted (0.5.0). `map_new()` (cstr-keyed) is the project default; `map_new_str()` is **not** used. Avoids the silent-segfault flavor mismatch. |
 | `0005-fixed-cap-ring-buffer-events-log.md` | 2026-05-08 | ✅ Fresh | Accepted (0.8.1). Fixed-cap ring for the events log; cap captured at `aegis_new` time. Killed the O(n²) prune-and-rebuild. |
+| `0006-fail-closed-rendering.md` | 2026-08-24 | ✅ Fresh | Accepted (1.1.6). Validation runs at the emission sink and the sink fails closed — `pam_render_rule` / `pam_render_config` return `0` rather than emit a rule that would not validate, matching the `0`-on-invalid convention the firewall builders have used since 0.9.3. Records the contract change from audit finding F-11. |
 | `template.md` | 2026-04-30 | 🔵 Evergreen | Standard ADR skeleton. Touch only when the ADR pattern changes. |
 | `README.md` | 2026-04-30 | 📦 Tier index | Frozen until a new ADR lands. |
 
-**ADR posture**: low decision-velocity. 5 ADRs cover every load-bearing port-time decision. Audit at the 1.0.0 cut: no new decisions outstanding. Re-evaluate at v2.0.0 cut whether any v1.x decisions need ADRs.
+**ADR posture**: low decision-velocity. 6 ADRs. 0001–0005 cover the load-bearing port-time decisions; 0006 is the first post-1.0 addition, recording the fail-closed rendering contract from the 1.1.6 P(-1) pass. Re-evaluate at the v2.0.0 cut whether any further v1.x decisions need ADRs.
 
 ---
 
@@ -98,7 +99,7 @@ Pattern lifted from agnosys's ledger ([`agnosys/docs/doc-health.md`](https://git
 | `docs/guides/getting-started.md` | 2026-05-10 | ✅ Fresh | Build / layout / add-a-feature flow. rust-old references dropped 0.9.1; `src/firewall.cyr` added to layout. |
 | `docs/examples/basic_consumer.cyr` | 2026-05-10 | ✅ Fresh | Stand-in downstream consumer (new in 0.9.2). Exercises the public surface end-to-end: aegis_new → report critical event → quarantine → firewall builder → render → validate. Builds clean. Not a real daimon, but proves nothing essential is private-by-accident. Stays as a teaching artifact post-1.0; reconsider when a real consumer lands. |
 
-| `tests/aegis.tcyr` | 2026-08-24 | ✅ Fresh | 326 assertions / 92 groups. Reformatted at 1.1.5 for 6.5.x paren-continuation indent, and the epilogue now clamps the exit status — it returned `assert_summary()`'s raw failure count, and exit status is 8-bit, so exactly 256 / 512 / 768 failures would have reported success. |
+| `tests/aegis.tcyr` | 2026-08-24 | ✅ Fresh | **414 assertions / 104 groups.** `src/pam.cyr` entered the test TU at 1.1.6 (it had zero assertions before) along with 12 regression groups for F-10..F-27; the inert F-8 oversize test was repaired and all three harnesses moved to `SYS_EXIT`. Earlier: reformatted at 1.1.5 for 6.5.x paren-continuation indent, and the epilogue clamps the exit status — it returned `assert_summary()`'s raw failure count, and exit status is 8-bit, so exactly 256 / 512 / 768 failures would have reported success. |
 
 ## Tier 6 — Audit reports (`docs/audit/`)
 
@@ -106,9 +107,10 @@ Date-stamped, frozen by design. Each P(-1) hardening pass per CLAUDE.md cadence 
 
 | File | Date | Status | Notes |
 |---|---|---|---|
+| `2026-08-24-audit.md` | 2026-08-24 | ✅ Fresh | Second P(-1) pass, and the first ever audit of `src/pam.cyr`. 18 findings F-10..F-27, all fixed in 1.1.6; one candidate refuted during verification and recorded rather than dropped. Closes F-8 from the prior report (bayan's per-depth cap landed upstream). |
 | `2026-05-10-audit.md` | 2026-05-10 | ✅ Fresh | First P(-1) audit (initial cut 0.9.3; F-7 + F-9 fixed 0.9.4; F-6 fixed 0.9.5). All 9 findings closed (F-8 has a partial fix with the deeper depth-cap tracked as a `lib/json.cyr` upstream change). CVE landscape research 2024-2026 (Wazuh, osquery, ESET, VMware, Tomcat, Jackson, Spring, Android KEV). |
 
-Next audit slot: at the next minor cut after a CVE pattern surfaces in nein, the cyrius json stdlib, or the agnostik UUID surface — or whenever `roadmap.md` items justify a paired pass.
+Next audit slot: paired with the next minor cut. `src/pam.cyr` is now inside the test and snapshot gates, so the next pass starts from parity rather than from an unaudited module.
 
 ---
 
@@ -132,7 +134,7 @@ None outstanding for the 1.0.0 cut. This section will repopulate when:
 
 | # | Commitment | Trigger | Source | Notes |
 |---|---|---|---|---|
-| 1 | **API-surface snapshot retention** — keep `docs/development/api-surface-1.0.snapshot` as the v1.0 baseline through at least v2.0.0; intentional public-fn additions regen via `scripts/check-api-surface.sh --update` and commit in the same PR. SemVer-stable from 1.0.0 onward — additions non-breaking, removals/renames need a major bump. | v2.0.0 cut | This file | Pattern proven by agnosys (730 fns) and aegis (151 fns). |
+| 1 | **API-surface snapshot currency** — `docs/development/api-surface.snapshot` tracks the *current* frozen surface, regenerated whenever public fns are intentionally added (`scripts/check-api-surface.sh --update`, committed in the same PR). Revised at 1.1.6: the original commitment was to freeze the v1.0 baseline until v2.0.0, but the drift gate passes additions silently (they are non-breaking), so the file sat stale at 151 fns from 1.0.0 through 1.1.5 while the real surface reached 214 — a baseline nobody updates stops describing anything. SemVer contract unchanged: additions non-breaking, removals/renames need a major bump. | every intentional public-fn addition | This file | Filename deliberately version-free so the label cannot go stale again. |
 | 2 | **CHANGELOG-as-historical-record** — never rewrite shipped CHANGELOG entries. Errata go in a follow-up entry, not in-place edits. (One in-flight rewrite happened in 0.9.1's editing phase before catching that 0.9.0 had already shipped — caught and reverted.) Codified at 1.0.0: roadmap.md is forward-only; CHANGELOG owns the historical record. | always | This file | Avoids retroactive-history corruption. |
 | 3 | **doc-health refresh cadence** — opportunistic, not periodic. Refresh in place when other docs are touched; the at-a-glance bucket counts only need a sync when they drift by more than ~2 in any cell. | When docs touched | This file | Aegis's small surface means the refresh load is light. |
 
@@ -164,4 +166,4 @@ This file's refresh cadence is **opportunistic** (touched when other docs are to
 
 ---
 
-*Last refresh: 2026-08-24 (1.1.5 toolchain + dependency refresh and manifest cleanup). Refresh in place when docs are touched.*
+*Last refresh: 2026-08-24 (1.1.6 P(-1) hardening pass). Refresh in place when docs are touched.*

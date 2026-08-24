@@ -14,3 +14,6 @@ date,version,bench,avg_ns,min_ns,max_ns,iterations,notes
 2026-08-24,1.1.5,aegis_next_id,839,772,2029,100000,cyrius 6.5.35 pin; harness now subtracts a measured 1.254us timer floor — not comparable to earlier rows
 2026-08-24,1.1.5,security_event_new,2372,2112,5390,100000,cyrius 6.5.35 pin; timer-floor-subtracted
 2026-08-24,1.1.5,aegis_report_event,3253,2981,6543,50000,cyrius 6.5.35 pin; timer-floor-subtracted
+2026-08-24,1.1.6,aegis_next_id,804,741,1673,100000,P(-1) F-25: str_new replaces str_from (drops a 36-byte strlen per event id)
+2026-08-24,1.1.6,security_event_new,2288,2082,5351,100000,P(-1) F-23/F-24 log gating + single map lookup; within noise of 1.1.5
+2026-08-24,1.1.6,aegis_report_event,3210,3039,6824,50000,P(-1) F-23/F-24; within noise of 1.1.5

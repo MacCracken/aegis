@@ -94,6 +94,20 @@ fn _aegis_span_exit() {
     return 0;
 }
 
+# Sakshi's level filter runs inside sakshi_info/warn/debug — by then the
+# caller has already allocated a str_builder, appended every key/value, and
+# built the final Str. At the default SK_INFO level every debug line in this
+# file is built and thrown away. These predicates let a call site skip the
+# construction entirely, mirroring _aegis_span_enter's guard.
+fn _aegis_log_want(level) {
+    if (sakshi_get_level() < level) { return 0; }
+    return 1;
+}
+
+fn _aegis_log_want_debug() { return _aegis_log_want(SK_DEBUG); }
+fn _aegis_log_want_info()  { return _aegis_log_want(SK_INFO); }
+fn _aegis_log_want_warn()  { return _aegis_log_want(SK_WARN); }
+
 fn _aegis_log_emit_info(sb) {
     var msg = str_builder_build(sb);
     sakshi_info(str_data(msg), str_len(msg));
@@ -163,7 +177,10 @@ fn _aegis_uuid_to_string(uuid_buf) {
         i = i + 1;
     }
     store8(hex + pos, 0);
-    return str_from(hex);
+    # str_new, not str_from: the buffer is NUL-terminated above and `pos` is
+    # already the exact length, so str_from's 36-byte strlen is pure waste on
+    # the hottest path in the library (once per security_event_new).
+    return str_new(hex, pos);
 }
 
 fn aegis_next_id() {
@@ -249,6 +266,7 @@ var AEGIS_AUTO_RELEASE_NONE = 0 - 1;
 #   periodic_scan_interval_secs. 1 year of seconds. Prevents CWE-690 sentinel
 #   collisions on negative input and pathological-arithmetic on huge input.
 var AEGIS_MAX_EVENTS_HARD_CAP = 1000000;
+var AEGIS_MAX_CONNS_HARD_CAP  = 65535;   # per-agent connection ceiling
 var AEGIS_TIMEOUT_HARD_CAP    = 31536000;
 
 # Clamp helpers — used at the JSON-deserialization seam and at the setters.
@@ -269,6 +287,14 @@ fn _aegis_clamp_interval_secs(v) {
 
 # auto_release_timeout_secs has the -1 sentinel for None. Anything else
 # negative is invalid → default (sentinel). Positives clamp to TIMEOUT cap.
+# Connection ceilings ride the same wire as the F-1 clamps; an unbounded or
+# negative value flows into consumer scheduling logic. 0 disables.
+fn _aegis_clamp_max_conns(v) {
+    if (v < 0) { return 0; }
+    if (v > AEGIS_MAX_CONNS_HARD_CAP) { return AEGIS_MAX_CONNS_HARD_CAP; }
+    return v;
+}
+
 fn _aegis_clamp_auto_release_timeout(v) {
     if (v == AEGIS_AUTO_RELEASE_NONE)   { return v; }
     if (v < 0)                          { return AEGIS_AUTO_RELEASE_NONE; }
@@ -407,11 +433,25 @@ fn aegis_events(d)        { return load64(d + 8); }
 fn aegis_quarantine(d)    { return load64(d + 16); }
 fn aegis_scan_history(d)  { return load64(d + 24); }
 
+# threat_counts is an INLINE i64[5] inside the daemon record (@32..@71),
+# immediately after scan_history @24. An out-of-range `level` is therefore a
+# direct OOB index: -1 lands on scan_history and corrupts a live vec pointer,
+# >=5 walks off the end of the record. Every in-tree producer already yields
+# 0..4 (threat_level_from_serde returns -1 and callers gate on `parsed >= 0`),
+# but these are public entry points and a consumer supplies the level.
+fn _aegis_threat_level_ok(level) {
+    if (level < 0) { return 0; }
+    if (level > 4) { return 0; }
+    return 1;
+}
+
 fn aegis_threat_count(d, level) {
+    if (_aegis_threat_level_ok(level) == 0) { return 0; }
     return load64(d + 32 + level * 8);
 }
 
 fn _aegis_inc_threat_count(d, level) {
+    if (_aegis_threat_level_ok(level) == 0) { return 0; }
     var off = d + 32 + level * 8;
     store64(off, load64(off) + 1);
     return 0;
@@ -462,13 +502,18 @@ fn _aegis_report_event_inner(d, ev) {
     var aid_cstr = str_data(aid_str);
     var qmap = _aegis_ensure_quarantine_map(d);
 
-    if (map_has(qmap, aid_cstr) == 1) {
-        var existing = map_get(qmap, aid_cstr);
-        var sbd = str_builder_new();
-        str_builder_add_cstr(sbd, "agent already quarantined, linking event");
-        _aegis_log_kv_cstr(sbd, "agent_id", aid_cstr);
-        _aegis_log_kv_str(sbd,  "event_id", event_id(ev));
-        _aegis_log_emit_debug(sbd);
+    # One lookup, not two: entries are QuarantineEntry pointers and are never
+    # 0, so a non-zero map_get IS the "present" answer. This is the
+    # aegis_report_event hot path — it runs for every CRITICAL/HIGH event.
+    var existing = map_get(qmap, aid_cstr);
+    if (existing != 0) {
+        if (_aegis_log_want_debug() == 1) {
+            var sbd = str_builder_new();
+            str_builder_add_cstr(sbd, "agent already quarantined, linking event");
+            _aegis_log_kv_cstr(sbd, "agent_id", aid_cstr);
+            _aegis_log_kv_str(sbd,  "event_id", event_id(ev));
+            _aegis_log_emit_debug(sbd);
+        }
         vec_push(q_events(existing), event_id(ev));
         if (threat < q_threat_level(existing)) {
             q_set_threat_level(existing, threat);
@@ -586,10 +631,12 @@ fn _aegis_resolve_event_inner(d, event_id_cstr) {
         var e = aegis_ring_get(events, i);
         if (streq(str_data(event_id(e)), event_id_cstr) == 1) {
             event_set_resolved(e, 1);
-            var sb = str_builder_new();
-            str_builder_add_cstr(sb, "event resolved");
-            _aegis_log_kv_cstr(sb, "event_id", event_id_cstr);
-            _aegis_log_emit_debug(sb);
+            if (_aegis_log_want_debug() == 1) {
+                var sb = str_builder_new();
+                str_builder_add_cstr(sb, "event resolved");
+                _aegis_log_kv_cstr(sb, "event_id", event_id_cstr);
+                _aegis_log_emit_debug(sb);
+            }
             return 1;
         }
         i = i + 1;
@@ -687,13 +734,15 @@ fn aegis_quarantine_agent(d, agent_id_cstr, reason_cstr, threat_level) {
 
 fn _aegis_quarantine_agent_inner(d, agent_id_cstr, reason_cstr, threat_level) {
     var qmap = _aegis_ensure_quarantine_map(d);
-    if (map_has(qmap, agent_id_cstr) == 1) {
-        var existing = map_get(qmap, agent_id_cstr);
-        var sbd = str_builder_new();
-        str_builder_add_cstr(sbd, "agent already quarantined, updating");
-        _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
-        _aegis_log_kv_cstr(sbd, "threat",   threat_level_label(threat_level));
-        _aegis_log_emit_debug(sbd);
+    var existing = map_get(qmap, agent_id_cstr);
+    if (existing != 0) {
+        if (_aegis_log_want_debug() == 1) {
+            var sbd = str_builder_new();
+            str_builder_add_cstr(sbd, "agent already quarantined, updating");
+            _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+            _aegis_log_kv_cstr(sbd, "threat",   threat_level_label(threat_level));
+            _aegis_log_emit_debug(sbd);
+        }
         if (threat_level < q_threat_level(existing)) {
             q_set_threat_level(existing, threat_level);
         }
@@ -749,7 +798,9 @@ fn aegis_is_quarantined(d, agent_id_cstr) {
 fn aegis_get_quarantine(d, agent_id_cstr) {
     if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
     if (aegis_quarantine(d) == 0) { return 0; }
-    if (map_has(aegis_quarantine(d), agent_id_cstr) == 0) { return 0; }
+    # map_get returns 0 for an absent key, which is exactly this function's
+    # "not quarantined" return — so the map_has probe was redundant, and
+    # aegis_quarantine(d) was being re-read three times besides.
     return map_get(aegis_quarantine(d), agent_id_cstr);
 }
 
@@ -968,18 +1019,22 @@ fn _aegis_scan_agent_inner(d, agent_id_cstr, binary_path_cstr) {
     var result = _scan_result_new(target, ST_ON_EXECUTE);
 
     if (aegis_config_scan_on_execute(aegis_config(d)) == 0) {
-        var sbd = str_builder_new();
-        str_builder_add_cstr(sbd, "agent scan skipped (disabled in config)");
-        _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
-        _aegis_log_emit_debug(sbd);
+        if (_aegis_log_want_debug() == 1) {
+            var sbd = str_builder_new();
+            str_builder_add_cstr(sbd, "agent scan skipped (disabled in config)");
+            _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+            _aegis_log_emit_debug(sbd);
+        }
         return _scan_result_seal(result);
     }
 
-    var sbd = str_builder_new();
-    str_builder_add_cstr(sbd, "scanning agent binary");
-    _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
-    _aegis_log_kv_cstr(sbd, "path",     binary_path_cstr);
-    _aegis_log_emit_debug(sbd);
+    if (_aegis_log_want_debug() == 1) {
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "scanning agent binary");
+        _aegis_log_kv_cstr(sbd, "agent_id", agent_id_cstr);
+        _aegis_log_kv_cstr(sbd, "path",     binary_path_cstr);
+        _aegis_log_emit_debug(sbd);
+    }
 
     var findings = scan_findings(result);
 
@@ -1037,17 +1092,21 @@ fn _aegis_scan_package_inner(d, package_path_cstr) {
     var result = _scan_result_new(target, ST_ON_INSTALL);
 
     if (aegis_config_scan_on_install(aegis_config(d)) == 0) {
-        var sbd = str_builder_new();
-        str_builder_add_cstr(sbd, "package scan skipped (disabled in config)");
-        _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
-        _aegis_log_emit_debug(sbd);
+        if (_aegis_log_want_debug() == 1) {
+            var sbd = str_builder_new();
+            str_builder_add_cstr(sbd, "package scan skipped (disabled in config)");
+            _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
+            _aegis_log_emit_debug(sbd);
+        }
         return _scan_result_seal(result);
     }
 
-    var sbd = str_builder_new();
-    str_builder_add_cstr(sbd, "scanning package");
-    _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
-    _aegis_log_emit_debug(sbd);
+    if (_aegis_log_want_debug() == 1) {
+        var sbd = str_builder_new();
+        str_builder_add_cstr(sbd, "scanning package");
+        _aegis_log_kv_cstr(sbd, "path", package_path_cstr);
+        _aegis_log_emit_debug(sbd);
+    }
 
     var findings = scan_findings(result);
 
@@ -1110,7 +1169,9 @@ fn aegis_stats(d) {
 
     var q = 0;
     if (aegis_quarantine(d) != 0) {
-        q = vec_len(aegis_quarantined_agents(d));
+        q = map_size(aegis_quarantine(d));   # map_size is O(1); building the
+        # entry vec here meant map_keys plus one map_get per key just to
+        # discard everything but the count.
     }
     store64(s + 16, q);
 
@@ -1150,8 +1211,9 @@ fn event_metadata_set(e, key_cstr, value_str) {
 # Returns the Str* value or 0 if the key is absent.
 fn event_metadata_get(e, key_cstr) {
     if (event_metadata(e) == 0) { return 0; }
-    if (map_has(event_metadata(e), key_cstr) == 0) { return 0; }
-    return map_get(event_metadata(e), key_cstr);
+    var meta = event_metadata(e);
+    if (meta == 0) { return 0; }
+    return map_get(meta, key_cstr);
 }
 
 # ================================================================
@@ -1319,9 +1381,11 @@ fn _aegis_check_database_integrity_inner(d, policy) {
         _aegis_log_kv_int(sbi, "findings", n);
         _aegis_log_emit_info(sbi);
     } else {
-        var sbd = str_builder_new();
-        str_builder_add_cstr(sbd, "database integrity check passed");
-        _aegis_log_emit_debug(sbd);
+        if (_aegis_log_want_debug() == 1) {
+            var sbd = str_builder_new();
+            str_builder_add_cstr(sbd, "database integrity check passed");
+            _aegis_log_emit_debug(sbd);
+        }
     }
 
     return findings;
@@ -1551,6 +1615,16 @@ fn _aegis_jv_get_int(obj, key_cstr) {
     return json_v_int(v);
 }
 
+# Store a wire bool at `off` only if `key_cstr` is present. Absent keys keep
+# whatever the record already holds — which lets the *_from_json_v readers
+# start from a defaults record and stay fail-closed on omitted switches.
+fn _aegis_jv_set_bool_into(obj, key_cstr, rec, off) {
+    var v = json_v_obj_get(obj, key_cstr);
+    if (v == 0) { return 0; }
+    store64(rec + off, json_v_bool(v));
+    return 1;
+}
+
 fn _aegis_jv_get_bool(obj, key_cstr) {
     var v = json_v_obj_get(obj, key_cstr);
     if (v == 0) { return 0; }
@@ -1558,7 +1632,12 @@ fn _aegis_jv_get_bool(obj, key_cstr) {
 }
 
 # P(-1) hardening (0.9.3): hard cap on JSON input length at every aegis
-# *_from_json seam. Partial mitigation for the depth-exhaustion DoS class
+# *_from_json seam. Originally a PARTIAL mitigation for the depth-exhaustion
+# DoS class — the per-depth cap was deferred upstream. That cap has since
+# landed: bayan enforces `_JP_MAX_DEPTH = 128` on both the value and
+# streaming descents, so aegis's F-8 is fully closed as of 1.1.6 and this
+# length cap is now defence in depth rather than the only line.
+# Original rationale for the depth-exhaustion DoS class
 # (CVE-2025-52999 Jackson, CVE-2024-57699 json-smart, CVE-2024-21907
 # Newtonsoft, CVE-2024-34155 Go) — lib/json.cyr is recursive and lacks
 # its own depth cap today. 256 KB bounds worst-case nesting at ~131K nodes
@@ -1668,7 +1747,11 @@ fn scan_result_from_json_v(v) {
     if (json_v_is_obj(v) == 0) { return 0; }
     var ts_cstr = _aegis_jv_get_cstr(v, "scanned_at");
     var ts = 0;
-    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    # iso8601_parse takes a cstr (it does strlen/load8 directly). Wrapping
+    # in str_from handed it a Str* fat pointer, so strlen walked the
+    # 16-byte header, always came out < 19, and the function returned its
+    # -1 sentinel — every deserialized timestamp was -1. See ADR 0002.
+    if (ts_cstr != 0) { ts = iso8601_parse(ts_cstr); }
     var target = _aegis_jv_get_str(v, "target");
     if (target == 0) { target = str_from(""); }
     var st_cstr = _aegis_jv_get_cstr(v, "scan_type");
@@ -1695,7 +1778,10 @@ fn scan_result_from_json_v(v) {
         }
     }
     store64(r + 24, findings_vec);
-    store64(r + 32, _aegis_jv_get_bool(v, "clean"));
+    # Re-seal from the findings we actually deserialized rather than trusting
+    # the wire flag — a peer sending findings alongside `clean: true` would
+    # otherwise have a failing scan read as passing.
+    _scan_result_seal(r);
     return r;
 }
 
@@ -1728,15 +1814,21 @@ fn aegis_config_to_json(c) { return json_v_build(aegis_config_to_json_v(c)); }
 fn aegis_config_from_json_v(v) {
     if (v == 0) { return 0; }
     if (json_v_is_obj(v) == 0) { return 0; }
-    var c = alloc(AEGIS_CONFIG_SIZE);
-    store64(c + 0,  _aegis_jv_get_bool(v, "scan_on_install"));
-    store64(c + 8,  _aegis_jv_get_bool(v, "scan_on_execute"));
+    # Start from the defaults, not from a zeroed record: an absent key must
+    # inherit the safe default, never 0. A partial document that omitted
+    # `quarantine_on_critical` used to silently disable auto-quarantine —
+    # fail-open on the daemon's primary enforcement switch.
+    var c = aegis_config_default();
+    _aegis_jv_set_bool_into(v, "scan_on_install", c, 0);
+    _aegis_jv_set_bool_into(v, "scan_on_execute", c, 8);
     # 0.9.3 P(-1): clamp ints from the wire — F-1 (max_events DoS),
     # F-4 (auto_release_timeout sentinel collision), F-5 (interval bounds).
-    store64(c + 16, _aegis_clamp_interval_secs(_aegis_jv_get_int(v, "periodic_scan_interval_secs")));
-    store64(c + 24, _aegis_jv_get_bool(v, "quarantine_on_critical"));
-    store64(c + 32, _aegis_jv_get_bool(v, "quarantine_on_high"));
-    store64(c + 40, _aegis_clamp_max_events(_aegis_jv_get_int(v, "max_events")));
+    var iv = json_v_obj_get(v, "periodic_scan_interval_secs");
+    if (iv != 0) { store64(c + 16, _aegis_clamp_interval_secs(json_v_int(iv))); }
+    _aegis_jv_set_bool_into(v, "quarantine_on_critical", c, 24);
+    _aegis_jv_set_bool_into(v, "quarantine_on_high", c, 32);
+    var mev = json_v_obj_get(v, "max_events");
+    if (mev != 0) { store64(c + 40, _aegis_clamp_max_events(json_v_int(mev))); }
     var arv = json_v_obj_get(v, "auto_release_timeout_secs");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
@@ -1785,7 +1877,7 @@ fn dbpolicy_from_json_v(v) {
     store64(p + 0,  pg);
     store64(p + 8,  rd);
     store64(p + 16, _aegis_jv_get_bool(v, "audit_ddl"));
-    store64(p + 24, _aegis_jv_get_int(v,  "max_connections_per_agent"));
+    store64(p + 24, _aegis_clamp_max_conns(_aegis_jv_get_int(v,  "max_connections_per_agent")));
     store64(p + 32, _aegis_jv_get_bool(v, "check_socket_permissions"));
     var kt = vec_new();
     var ktv = json_v_obj_get(v, "kernel_tuning");
@@ -1900,7 +1992,11 @@ fn quarantine_entry_from_json_v(v) {
     store64(entry + 8, reason);
     var ts_cstr = _aegis_jv_get_cstr(v, "quarantined_at");
     var ts = 0;
-    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    # iso8601_parse takes a cstr (it does strlen/load8 directly). Wrapping
+    # in str_from handed it a Str* fat pointer, so strlen walked the
+    # 16-byte header, always came out < 19, and the function returned its
+    # -1 sentinel — every deserialized timestamp was -1. See ADR 0002.
+    if (ts_cstr != 0) { ts = iso8601_parse(ts_cstr); }
     store64(entry + 16, ts);
     var tl_cstr = _aegis_jv_get_cstr(v, "threat_level");
     var tl = THREAT_INFO;
@@ -1930,7 +2026,8 @@ fn quarantine_entry_from_json_v(v) {
     var arv = json_v_obj_get(v, "auto_release_at");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
-        if (json_v_is_str(arv) == 1) { ar = iso8601_parse(json_v_str(arv)); }
+        # json_v_str returns a Str*; iso8601_parse needs the cstr behind it.
+        if (json_v_is_str(arv) == 1) { ar = iso8601_parse(str_data(json_v_str(arv))); }
     }
     store64(entry + 40, ar);
     return entry;
@@ -1986,7 +2083,11 @@ fn security_event_from_json_v(v) {
     store64(e + 0, id);
     var ts_cstr = _aegis_jv_get_cstr(v, "timestamp");
     var ts = 0;
-    if (ts_cstr != 0) { ts = iso8601_parse(str_from(ts_cstr)); }
+    # iso8601_parse takes a cstr (it does strlen/load8 directly). Wrapping
+    # in str_from handed it a Str* fat pointer, so strlen walked the
+    # 16-byte header, always came out < 19, and the function returned its
+    # -1 sentinel — every deserialized timestamp was -1. See ADR 0002.
+    if (ts_cstr != 0) { ts = iso8601_parse(ts_cstr); }
     store64(e + 8, ts);
     var kind_cstr = _aegis_jv_get_cstr(v, "event_type");
     var kind = EV_POLICY_VIOLATION;
@@ -2001,7 +2102,13 @@ fn security_event_from_json_v(v) {
     var aid_v = json_v_obj_get(v, "agent_id");
     var aid = 0;
     if (aid_v != 0) {
-        if (json_v_is_str(aid_v) == 1) { aid = json_v_str(aid_v); }
+        if (json_v_is_str(aid_v) == 1) {
+            # Same whitelist security_event_new applies (F-7). Without it the
+            # serde seam could mint an event whose agent_id the quarantine and
+            # release entry points then refuse — an entry nothing can clear.
+            var aid_c = str_data(json_v_str(aid_v));
+            if (_aegis_valid_agent_id_or_empty(aid_c) == 1) { aid = json_v_str(aid_v); }
+        }
     }
     store64(e + 32, aid);
     var tl_cstr = _aegis_jv_get_cstr(v, "threat_level");

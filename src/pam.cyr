@@ -35,7 +35,12 @@ fn pam_read_fd_to_str(fd, cap): i64 {
     var rgo = 1;
     while (rgo == 1) {
         var n = sys_read(fd, buf + total, cap - total);
-        if (n <= 0) {
+        if (n == 0 - EINTR) {
+            # A signal is not end-of-file. Treating it as one silently
+            # truncated the security config being parsed, which for a
+            # `required` line means reading a weaker policy than is on disk.
+            rgo = 1;
+        } elif (n <= 0) {
             rgo = 0;
         } else {
             total = total + n;
@@ -44,6 +49,101 @@ fn pam_read_fd_to_str(fd, cap): i64 {
     }
     store8(buf + total, 0);
     return str_new(buf, total);
+}
+
+# O_NOFOLLOW is not exported by the cyrius stdlib yet; src/lib.cyr carries
+# the same local constant for the F-6 scanner fix. Drop both when it lands.
+var _PAM_O_NOFOLLOW = 131072;
+
+# Cap on `who` capture. The buffer is allocated at cap+1 so the NUL
+# terminator below always lands inside the allocation — run_capture can
+# return exactly `cap`.
+var _PAM_WHO_CAP = 16384;
+
+# ================================================================
+# Byte-class allowlists
+#
+# Every validator in aegis is an allowlist (see _aegis_valid_agent_id in
+# src/lib.cyr) because the 2026-05-10 audit's F-2 established that
+# denylists lose. These are the PAM-side equivalents.
+#
+# The rendering context is what makes the byte set load-bearing:
+# pam_render_rule joins fields with TAB and pam_render_config joins lines
+# with LF, so any control byte surviving validation becomes a structural
+# character in the emitted /etc/pam.d file.
+# ================================================================
+
+# Reject anything outside printable ASCII, and any byte not in `extra`.
+# `extra` is a cstr of additionally-permitted punctuation.
+fn _pam_str_allowed(sv, extra_cstr, maxlen): i64 {
+    var n = str_len(sv);
+    if (n == 0) { return 0; }
+    if (n > maxlen) { return 0; }
+    var d = str_data(sv);
+    var elen = strlen(extra_cstr);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        var ok = 0;
+        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } }   # 0-9
+        if (c >= 0x41) { if (c <= 0x5A) { ok = 1; } }   # A-Z
+        if (c >= 0x61) { if (c <= 0x7A) { ok = 1; } }   # a-z
+        if (ok == 0) {
+            var j = 0;
+            while (j < elen) {
+                if (c == load8(extra_cstr + j)) { ok = 1; }
+                j = j + 1;
+            }
+        }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Module path: [A-Za-z0-9._/-], 1..255.
+fn _pam_valid_module(sv): i64 { return _pam_str_allowed(sv, "._/-", 255); }
+
+# Rule argument: module charset plus the =,:@ that real PAM args use.
+fn _pam_valid_arg(sv): i64 { return _pam_str_allowed(sv, "._/-=,:@[]", 255); }
+
+# Service name — becomes a path component under /etc/pam.d/, so no '/'
+# and no leading '.' (which kills "." and ".." along with dotfiles).
+fn _pam_valid_service_name(name_cstr): i64 {
+    if (name_cstr == 0) { return 0; }
+    var n = strlen(name_cstr);
+    if (n == 0) { return 0; }
+    if (n > 64) { return 0; }
+    if (load8(name_cstr) == 0x2E) { return 0; }         # leading '.'
+    var i = 0;
+    while (i < n) {
+        var c = load8(name_cstr + i);
+        var ok = 0;
+        if (c >= 0x30) { if (c <= 0x39) { ok = 1; } }   # 0-9
+        if (c >= 0x41) { if (c <= 0x5A) { ok = 1; } }   # A-Z
+        if (c >= 0x61) { if (c <= 0x7A) { ok = 1; } }   # a-z
+        if (c == 0x2E) { ok = 1; }                      # .
+        if (c == 0x2D) { ok = 1; }                      # -
+        if (c == 0x5F) { ok = 1; }                      # _
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# Every byte of `sv` is an ASCII digit.
+fn _pam_all_digits(sv): i64 {
+    var n = str_len(sv);
+    if (n == 0) { return 0; }
+    var d = str_data(sv);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        if (c < 0x30) { return 0; }
+        if (c > 0x39) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }
 
 # ================================================================
@@ -89,10 +189,10 @@ fn pam_rule_type_name(t): i64 {
 
 # Parse rule type from Str. Returns type id or -1 on error.
 fn pam_parse_rule_type(s): i64 {
-    if (str_eq(s, str_from("auth")) == 1) { return PAM_TYPE_AUTH; }
-    if (str_eq(s, str_from("account")) == 1) { return PAM_TYPE_ACCOUNT; }
-    if (str_eq(s, str_from("session")) == 1) { return PAM_TYPE_SESSION; }
-    if (str_eq(s, str_from("password")) == 1) { return PAM_TYPE_PASSWORD; }
+    if (str_eq_cstr(s, "auth") == 1) { return PAM_TYPE_AUTH; }
+    if (str_eq_cstr(s, "account") == 1) { return PAM_TYPE_ACCOUNT; }
+    if (str_eq_cstr(s, "session") == 1) { return PAM_TYPE_SESSION; }
+    if (str_eq_cstr(s, "password") == 1) { return PAM_TYPE_PASSWORD; }
     return 0 - 1;
 }
 
@@ -106,6 +206,11 @@ enum PamControlId {
     PAM_CTL_SUFFICIENT = 2;
     PAM_CTL_OPTIONAL = 3;
     PAM_CTL_INCLUDE = 4;
+    # Linux-PAM's bracketed value=action form, e.g.
+    # `[success=1 default=bad]`. The raw text is kept on the rule's
+    # control_text field so render reproduces it verbatim; collapsing it to
+    # one of the four keywords above would silently change the stack.
+    PAM_CTL_BRACKET = 5;
 }
 
 fn pam_control_name(c): i64 {
@@ -114,34 +219,49 @@ fn pam_control_name(c): i64 {
     if (c == PAM_CTL_SUFFICIENT) { return "sufficient"; }
     if (c == PAM_CTL_OPTIONAL) { return "optional"; }
     if (c == PAM_CTL_INCLUDE) { return "include"; }
+    if (c == PAM_CTL_BRACKET) { return "bracket"; }
     return "unknown";
 }
 
 # Parse control flag from Str. Returns control id or -1 on error.
 fn pam_parse_control(s): i64 {
-    if (str_eq(s, str_from("required")) == 1) { return PAM_CTL_REQUIRED; }
-    if (str_eq(s, str_from("requisite")) == 1) { return PAM_CTL_REQUISITE; }
-    if (str_eq(s, str_from("sufficient")) == 1) { return PAM_CTL_SUFFICIENT; }
-    if (str_eq(s, str_from("optional")) == 1) { return PAM_CTL_OPTIONAL; }
-    if (str_eq(s, str_from("include")) == 1) { return PAM_CTL_INCLUDE; }
+    if (str_eq_cstr(s, "required") == 1) { return PAM_CTL_REQUIRED; }
+    if (str_eq_cstr(s, "requisite") == 1) { return PAM_CTL_REQUISITE; }
+    if (str_eq_cstr(s, "sufficient") == 1) { return PAM_CTL_SUFFICIENT; }
+    if (str_eq_cstr(s, "optional") == 1) { return PAM_CTL_OPTIONAL; }
+    if (str_eq_cstr(s, "include") == 1) { return PAM_CTL_INCLUDE; }
+    if (str_len(s) > 1) {
+        var d = str_data(s);
+        if (load8(d) == 0x5B) {                          # '['
+            if (load8(d + str_len(s) - 1) == 0x5D) { return PAM_CTL_BRACKET; }
+        }
+    }
     return 0 - 1;
 }
 
 # ================================================================
-# PamRule struct — 4 fields * 8 = 32 bytes.
+# PamRule struct — 6 fields * 8 = 48 bytes.
 # Field name `type` matches the 1.0 getter `pam_rule_type/1`
 # (not the constructor arg name `rule_type`).
+#
+# `optional` records Linux-PAM's leading `-` on the type ("skip silently
+# if the module is missing"); `control_text` holds the raw bracketed
+# control expression when control == PAM_CTL_BRACKET, 0 otherwise. Both
+# exist so a parsed real-world config renders back byte-for-byte instead
+# of being flattened into a different policy.
 # ================================================================
 
 #derive(accessors)
-struct pam_rule { type; control; module; args; }
+struct pam_rule { type; control; module; args; optional; control_text; }
 
 fn pam_rule_new(rule_type, control, module, args): i64 {
-    var r = alloc(32);
+    var r = alloc(48);
     pam_rule_set_type(r, rule_type);
     pam_rule_set_control(r, control);
     pam_rule_set_module(r, module);
     pam_rule_set_args(r, args);
+    pam_rule_set_optional(r, 0);
+    pam_rule_set_control_text(r, 0);
     return r;
 }
 
@@ -267,24 +387,29 @@ fn pam_parse_passwd_line(line): i64 {
         return stik_err_invalid_argument("malformed passwd line (expected 7 fields)");
     }
 
-    var username = vec_get(fields, 0);
+    # Cloned for the same reason as pam_split_whitespace's parts: str_split
+    # borrows the line's buffer without terminating, and these three become
+    # public record fields.
+    var username = str_clone(vec_get(fields, 0));
     # fields[1] = password placeholder (x)
     var uid_str = vec_get(fields, 2);
     var gid_str = vec_get(fields, 3);
     # fields[4] = gecos
-    var home_dir = vec_get(fields, 5);
-    var shell = vec_get(fields, 6);
+    var home_dir = str_clone(vec_get(fields, 5));
+    var shell = str_clone(vec_get(fields, 6));
 
     var uid = str_to_int(uid_str);
     var gid = str_to_int(gid_str);
 
-    # Validate uid/gid are numeric (str_to_int returns 0 for invalid,
-    # but "0" is valid for root — check that string actually looks numeric)
-    if (str_len(uid_str) == 0) {
-        return stik_err_invalid_argument("invalid UID in passwd line");
+    # str_to_int skips non-digits silently and returns 0 for a wholly
+    # non-numeric field — so "alice:x:root:root:..." used to parse as uid 0,
+    # gid 0, is_system=1. The comment here always claimed this was checked;
+    # now it is.
+    if (_pam_all_digits(uid_str) == 0) {
+        return stik_err_invalid_argument("non-numeric UID in passwd line");
     }
-    if (str_len(gid_str) == 0) {
-        return stik_err_invalid_argument("invalid GID in passwd line");
+    if (_pam_all_digits(gid_str) == 0) {
+        return stik_err_invalid_argument("non-numeric GID in passwd line");
     }
 
     # Heuristic: UIDs below 1000 are system users
@@ -347,7 +472,7 @@ fn pam_parse_who_output(output): i64 {
             var ll = str_len(last_part);
             if (load8(ld) == 40) {  # '('
                 if (load8(ld + ll - 1) == 41) {  # ')'
-                    remote_host = str_sub(last_part, 1, ll - 2);
+                    remote_host = str_clone(str_sub(last_part, 1, ll - 2));
                 }
             }
         }
@@ -369,6 +494,10 @@ fn pam_parse_who_output(output): i64 {
 
 # Split a Str by whitespace (space/tab), skipping consecutive whitespace.
 # Returns vec of Str.
+# Parts are CLONED, not borrowed. str_new/str_sub share the parent's buffer
+# and do not NUL-terminate, so a borrowed part's str_data() reads on into
+# the rest of the line — and these parts become record fields exposed
+# through public getters, where ADR 0002 makes str_data() the unwrap.
 fn pam_split_whitespace(s): i64 {
     var parts = vec_new();
     var slen = str_len(s);
@@ -385,7 +514,7 @@ fn pam_split_whitespace(s): i64 {
 
         if (is_ws == 1) {
             if (in_word == 1) {
-                vec_push(parts, str_new(sd + start, i - start));
+                vec_push(parts, str_clone(str_new(sd + start, i - start)));
                 in_word = 0;
             }
         }
@@ -400,7 +529,7 @@ fn pam_split_whitespace(s): i64 {
 
     # Trailing word
     if (in_word == 1) {
-        vec_push(parts, str_new(sd + start, slen - start));
+        vec_push(parts, str_clone(str_new(sd + start, slen - start)));
     }
 
     return parts;
@@ -432,31 +561,86 @@ fn pam_parse_config(content): i64 {
         }
 
         var parts = pam_split_whitespace(line);
-        if (vec_len(parts) < 3) {
+        var nparts = vec_len(parts);
+        if (nparts < 3) {
             return stik_err_invalid_argument("malformed PAM rule (need type, control, module)");
         }
 
-        var rule_type = pam_parse_rule_type(vec_get(parts, 0));
+        # A leading '-' on the type means "skip silently if the module is
+        # absent". 14 of the lines in this host's own /etc/pam.d use it;
+        # without this the whole file was rejected.
+        var type_tok = vec_get(parts, 0);
+        var optional = 0;
+        if (str_len(type_tok) > 1) {
+            if (load8(str_data(type_tok)) == 0x2D) {     # '-'
+                optional = 1;
+                type_tok = str_sub(type_tok, 1, str_len(type_tok) - 1);
+            }
+        }
+
+        var rule_type = pam_parse_rule_type(type_tok);
         if (rule_type < 0) {
             return stik_err_invalid_argument("unknown PAM rule type");
         }
 
-        var control = pam_parse_control(vec_get(parts, 1));
+        # The bracketed control form contains spaces, so pam_split_whitespace
+        # has already torn it into several tokens — rejoin from '[' to the
+        # token ending in ']'.
+        var ci = 1;
+        var ctl_tok = vec_get(parts, 1);
+        var control_text = 0;
+        if (str_len(ctl_tok) > 0) {
+            if (load8(str_data(ctl_tok)) == 0x5B) {      # '['
+                var csb = str_builder_new();
+                var closed = 0;
+                while (ci < nparts) {
+                    var tok = vec_get(parts, ci);
+                    if (ci > 1) { str_builder_add_cstr(csb, " "); }
+                    str_builder_add(csb, tok);
+                    var tl = str_len(tok);
+                    if (tl > 0) {
+                        if (load8(str_data(tok) + tl - 1) == 0x5D) {   # ']'
+                            closed = 1;
+                            ci = ci + 1;
+                            break;
+                        }
+                    }
+                    ci = ci + 1;
+                }
+                if (closed == 0) {
+                    return stik_err_invalid_argument("unterminated PAM control expression");
+                }
+                control_text = str_builder_build(csb);
+                ctl_tok = control_text;
+            } else {
+                ci = 2;
+            }
+        } else {
+            ci = 2;
+        }
+
+        var control = pam_parse_control(ctl_tok);
         if (control < 0) {
             return stik_err_invalid_argument("unknown PAM control flag");
         }
+        if (control != PAM_CTL_BRACKET) { control_text = 0; }
 
-        var module = vec_get(parts, 2);
+        if (ci >= nparts) {
+            return stik_err_invalid_argument("malformed PAM rule (missing module)");
+        }
+        var module = vec_get(parts, ci);
 
         # Collect remaining parts as args
         var args = vec_new();
-        var ai = 3;
-        while (ai < vec_len(parts)) {
+        var ai = ci + 1;
+        while (ai < nparts) {
             vec_push(args, vec_get(parts, ai));
             ai = ai + 1;
         }
 
         var rule = pam_rule_new(rule_type, control, module, args);
+        pam_rule_set_optional(rule, optional);
+        pam_rule_set_control_text(rule, control_text);
         vec_push(rules, rule);
 
         idx = idx + 1;
@@ -484,13 +668,21 @@ fn pam_list_services(): i64 {
 # service_name: C string (e.g. "sshd", "sudo").
 # Returns Result: Ok(vec_of_rules) or Err.
 fn pam_read_service_config(service_name): i64 {
+    # The name is concatenated into a path, so it is a path component and
+    # must be validated as one. Unchecked, "../../tmp/fifo" both escaped
+    # /etc/pam.d and — because a bare O_RDONLY open on a FIFO with no writer
+    # blocks in the kernel forever — hung the daemon permanently.
+    if (_pam_valid_service_name(service_name) == 0) {
+        return stik_err_invalid_argument("invalid PAM service name");
+    }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "/etc/pam.d/");
     str_builder_add_cstr(sb, service_name);
     var path = str_builder_build(sb);
 
-    # Read the file content
-    var fd = sys_open(str_data(path), O_RDONLY, 0);
+    # O_NOFOLLOW mirrors the F-6 scanner fix: a symlink planted at
+    # /etc/pam.d/<name> must not redirect the read.
+    var fd = sys_open(str_data(path), O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open PAM config file");
     }
@@ -508,7 +700,7 @@ fn pam_read_service_config(service_name): i64 {
 # Read /etc/passwd and return vec of UserInfo pointers.
 # Returns Result: Ok(vec) or Err.
 fn pam_list_users(): i64 {
-    var fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open /etc/passwd");
     }
@@ -548,8 +740,12 @@ fn pam_list_users(): i64 {
 # Run `who` and parse output into vec of SessionInfo.
 # Returns Result: Ok(vec) or Err.
 fn pam_list_sessions(): i64 {
-    var buf = alloc(16384);
-    var res = run_capture("/usr/bin/who", 0, 0, buf, 16384);
+    # cap+1: run_capture fills up to `cap` and returns exactly that on a full
+    # buffer, so the NUL below would land one byte past a cap-sized
+    # allocation. pam_read_fd_to_str already allocates cap+1; this site did
+    # not.
+    var buf = alloc(_PAM_WHO_CAP + 1);
+    var res = run_capture("/usr/bin/who", 0, 0, buf, _PAM_WHO_CAP);
     if (is_err_result(res) == 1) {
         return stik_err_io("failed to run who command");
     }
@@ -565,17 +761,29 @@ fn pam_list_sessions(): i64 {
 # ================================================================
 
 # Render a single PamRule to a config-file line (Str).
+# Returns 0 when the rule fails validation. Rendering is the injection sink,
+# so it refuses to emit anything pam_validate_rule would reject rather than
+# trusting the caller to have validated first.
 fn pam_render_rule(rule): i64 {
+    if (is_err_result(pam_validate_rule(rule)) == 1) { return 0; }
     var sb = str_builder_new();
+    if (pam_rule_optional(rule) == 1) { str_builder_add_cstr(sb, "-"); }
     str_builder_add_cstr(sb, pam_rule_type_name(pam_rule_type(rule)));
     str_builder_add_cstr(sb, "\t");
-    str_builder_add_cstr(sb, pam_control_name(pam_rule_control(rule)));
+    var ctext = pam_rule_control_text(rule);
+    if (pam_rule_control(rule) == PAM_CTL_BRACKET) {
+        if (ctext == 0) { return 0; }
+        str_builder_add(sb, ctext);
+    } else {
+        str_builder_add_cstr(sb, pam_control_name(pam_rule_control(rule)));
+    }
     str_builder_add_cstr(sb, "\t");
     str_builder_add(sb, pam_rule_module(rule));
 
     var args = pam_rule_args(rule);
+    var nargs = vec_len(args);
     var ai = 0;
-    while (ai < vec_len(args)) {
+    while (ai < nargs) {
         str_builder_add_cstr(sb, "\t");
         str_builder_add(sb, vec_get(args, ai));
         ai = ai + 1;
@@ -590,9 +798,15 @@ fn pam_render_config(rules): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "# Generated by AGNOS PAM manager\n");
 
+    var nrules = vec_len(rules);
     var idx = 0;
-    while (idx < vec_len(rules)) {
-        str_builder_add(sb, pam_render_rule(vec_get(rules, idx)));
+    while (idx < nrules) {
+        var line = pam_render_rule(vec_get(rules, idx));
+        # Fail closed on the whole document: emitting a config with one rule
+        # silently dropped would weaken the stack just as surely as emitting
+        # the bad rule would.
+        if (line == 0) { return 0; }
+        str_builder_add(sb, line);
         str_builder_add_cstr(sb, "\n");
         idx = idx + 1;
     }
@@ -613,91 +827,37 @@ fn pam_validate_rule(rule): i64 {
     }
 
     # Module must not contain ".."
-    if (str_contains(module, str_from("..")) == 1) {
+    if (str_contains_cstr(module, "..") == 1) {
         return stik_err_invalid_argument("PAM module path must not contain '..'");
     }
 
-    # Reject shell metacharacters in module name
-    # Dangerous chars: | ; & $ ` > < ! { }
-    var md = str_data(module);
-    var mlen = str_len(module);
-    var mi = 0;
-    while (mi < mlen) {
-        var ch = load8(md + mi);
-        if (ch == 124) {
-            return stik_err_invalid_argument("PAM module: dangerous char '|'");
-        }
-        if (ch == 59) {
-            return stik_err_invalid_argument("PAM module: dangerous char ';'");
-        }
-        if (ch == 38) {
-            return stik_err_invalid_argument("PAM module: dangerous char '&'");
-        }
-        if (ch == 36) {
-            return stik_err_invalid_argument("PAM module: dangerous char '$'");
-        }
-        if (ch == 96) {
-            return stik_err_invalid_argument("PAM module: dangerous char '`'");
-        }
-        if (ch == 62) {
-            return stik_err_invalid_argument("PAM module: dangerous char '>'");
-        }
-        if (ch == 60) {
-            return stik_err_invalid_argument("PAM module: dangerous char '<'");
-        }
-        if (ch == 33) {
-            return stik_err_invalid_argument("PAM module: dangerous char '!'");
-        }
-        if (ch == 123) {
-            return stik_err_invalid_argument("PAM module: dangerous char '{'");
-        }
-        if (ch == 125) {
-            return stik_err_invalid_argument("PAM module: dangerous char '}'");
-        }
-        mi = mi + 1;
+    # Allowlist. Replaces a ten-byte denylist that let TAB, LF, CR, NUL and
+    # every high byte through — and pam_render_rule joins fields with TAB
+    # while pam_render_config joins lines with LF, so a surviving LF became a
+    # whole extra PAM stack entry in the rendered config (e.g. an injected
+    # `auth sufficient pam_permit.so`, which authenticates every password).
+    if (_pam_valid_module(module) == 0) {
+        return stik_err_invalid_argument("PAM module path has a disallowed character");
     }
 
-    # Same check for each argument
+    # The bracket expression is rendered verbatim, so it is an injection sink
+    # exactly like module and args. Space is legal inside it and nowhere else.
+    if (pam_rule_control(rule) == PAM_CTL_BRACKET) {
+        var ctext = pam_rule_control_text(rule);
+        if (ctext == 0) {
+            return stik_err_invalid_argument("bracket control with no text");
+        }
+        if (_pam_str_allowed(ctext, "[]= _-", 255) == 0) {
+            return stik_err_invalid_argument("PAM control expression has a disallowed character");
+        }
+    }
+
     var args = pam_rule_args(rule);
+    var nargs = vec_len(args);
     var ai = 0;
-    while (ai < vec_len(args)) {
-        var arg = vec_get(args, ai);
-        var ad = str_data(arg);
-        var alen = str_len(arg);
-        var aj = 0;
-        while (aj < alen) {
-            var ach = load8(ad + aj);
-            if (ach == 124) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 59) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 38) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 36) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 96) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 62) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 60) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 33) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 123) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            if (ach == 125) {
-                return stik_err_invalid_argument("PAM arg: dangerous char");
-            }
-            aj = aj + 1;
+    while (ai < nargs) {
+        if (_pam_valid_arg(vec_get(args, ai)) == 0) {
+            return stik_err_invalid_argument("PAM arg has a disallowed character");
         }
         ai = ai + 1;
     }
@@ -715,7 +875,7 @@ fn pam_get_user_info(username): i64 {
     var res = pam_validate_username(username);
     if (is_err_result(res) == 1) { return res; }
 
-    var fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open /etc/passwd");
     }

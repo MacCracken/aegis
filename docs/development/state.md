@@ -7,6 +7,19 @@
 
 ## Version
 
+**1.1.6** — second P(-1) hardening pass (2026-08-24), paired with the 1.1.x minor.
+**18 findings (F-10..F-27), all fixed** — see
+[`../audit/2026-08-24-audit.md`](../audit/2026-08-24-audit.md). Four HIGH: every
+JSON-deserialized timestamp was the `-1` error sentinel (`iso8601_parse` fed a
+`Str*` where a cstr is required); PAM rule validation was a denylist that omitted
+the TAB/LF render delimiters, making the render path a PAM-stack injection
+primitive; `pam_read_service_config` concatenated an unvalidated service name into
+a path and opened it blocking; and a partial config document silently disabled
+auto-quarantine. The first audit of `src/pam.cyr` — folded in at 1.1.0, it
+predated the 2026-05-10 pass and had **zero** test assertions, which is why six of
+the findings survived a release. Tests 326 → 414. API snapshot regenerated at 214
+fns and renamed version-free. F-8 fully closed (bayan's depth cap landed).
+
 **1.1.5** — toolchain + dependency refresh and manifest cleanup (2026-08-24):
 cyrius pin `6.4.66` → `6.5.35`, agnostik `1.3.4` → `1.4.0`, nein `1.6.4` →
 `1.6.10`. No aegis behavioural change — the public surface, all wire formats,
@@ -51,18 +64,23 @@ changed to in-place-plus-`--check` in 6.5.x, so the fmt gate in `audit.sh` and
 
 ## Source
 
-- `src/lib.cyr` — core library: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points, fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
+- `src/lib.cyr` — core library: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points (debug construction gated behind `_aegis_log_want_debug` since 1.1.6), fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
 - `src/firewall.cyr` — nein integration. Three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) + `aegis_firewall_render` / `aegis_firewall_validate` wrappers. Standalone surface — not coupled to `QuarantineEntry`; consumers (daimon) decide when to call the builder based on the `QuarantineAction` they read from the entry.
-- `src/pam.cyr` — PAM (Pluggable Authentication Modules) surface, folded in from agnosys during the agnosys → agnodrm decomposition (1.1.0). 59 public fns; leans on agnostik's `stik_err_invalid_argument` / `stik_err_io`.
+- `src/pam.cyr` — PAM surface, folded in from agnosys during the agnosys → agnodrm decomposition (1.1.0). 63 public fns. Parses `/etc/passwd`, `/etc/pam.d/*` and `who` output; audited for the first time at 1.1.6, which added allowlist validation on module / arg / service-name, `O_NOFOLLOW` on every open, fail-closed rendering, and support for the `-` type prefix and bracketed control form that real PAM configs use.
 - `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, prints `"aegis ready"`. Includes `lib.cyr`, `firewall.cyr`, and `pam.cyr`.
+
+**Allocator note for consumers**: aegis never calls `free`, and the default bump
+allocator's `free` is a no-op. Steady-state memory tracks *total events reported*,
+not the ring's capacity — [ADR 0005](../adr/0005-fixed-cap-ring-buffer-events-log.md)
+bounds CPU and live-set size, not process RSS.
 
 ## Tests / fuzz / bench
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **326 passed / 0 failed** across 92 test groups (6 firewall in 0.9.0; 7 P(-1)-hardening in 0.9.3; 5 quarantine-validator in 0.9.4; 1 scan-no-follow-symlink in 0.9.5). |
+| `tests/aegis.tcyr` | **414 passed / 0 failed** across 104 test groups (326/92 before 1.1.6). 12 groups added at 1.1.6 covering every F-10..F-27 regression; `src/pam.cyr` entered the test TU at 1.1.6 with 7 dedicated groups after having zero assertions. |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
-| `tests/aegis.bcyr` | 3 benches on 6.5.35: `aegis_next_id` 839 ns, `security_event_new` 2.372 µs, `aegis_report_event` 3.253 µs (avg, 50–100k iter). 6.5.x's harness subtracts a measured timer floor, so these are a **new baseline**, not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
+| `tests/aegis.bcyr` | 3 benches on 6.5.35: `aegis_next_id` 804 ns, `security_event_new` 2.288 µs, `aegis_report_event` 3.210 µs (avg, 50–100k iter). Only `aegis_next_id` moved beyond noise at 1.1.6 (F-25). 6.5.x's harness subtracts a measured timer floor, so these are not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
 
 ## Dependencies
 
@@ -111,14 +129,19 @@ _None yet_ — daimon and argonaut are the planned downstream consumers; pull `s
 
 ## API surface
 
-`cyrius api-surface --scope=project` reports **210 public fns** (145 `lib` +
-59 `pam` + 5 `firewall` + 1 `main`) against the **151-fn** v1.0
-snapshot at [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) — 59
-additions, all from the 1.1.x PAM fold. The drift gate
-([`scripts/check-api-surface.sh`](../../scripts/check-api-surface.sh)) passes:
-additions are non-breaking under SemVer. Whether to regenerate the v1.0 baseline
-is an open decision, deliberately not taken at 1.1.5 — the snapshot is the
-frozen v1.0 contract, and no downstream consumer has landed to pin it against.
+[`api-surface.snapshot`](api-surface.snapshot) holds the frozen public surface —
+**214 public fns** (145 `lib` + 63 `pam` + 5 `firewall` + 1 `main`), regenerated
+at 1.1.6. It was stale at 151 fns from 1.0.0 until then: the 1.1.0 PAM fold added
+its symbols without a snapshot update, and the drift gate passes additions
+silently because they are non-breaking under SemVer, so nothing forced the issue.
+
+Renamed from `api-surface-1.0.snapshot` at 1.1.6 — the file holds the *current*
+frozen surface, not the v1.0 one, and a version number in the filename guarantees
+the label goes stale again.
+
+The contract is unchanged: additions are non-breaking, removals and renames need
+a major bump. The gate is [`scripts/check-api-surface.sh`](../../scripts/check-api-surface.sh);
+intentional additions regenerate with `--update` and commit in the same PR.
 
 ## Next
 

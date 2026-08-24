@@ -6,9 +6,11 @@
 > [`state.md`](state.md). Doc currency in
 > [`../doc-health.md`](../doc-health.md).
 >
-> v1.0.0 cut on 2026-05-10. The 151-fn API at
-> [`api-surface-1.0.snapshot`](api-surface-1.0.snapshot) is the
-> SemVer-stable contract from this point forward.
+> v1.0.0 cut on 2026-05-10. The API at
+> [`api-surface.snapshot`](api-surface.snapshot) is the SemVer-stable
+> contract from that point forward — **214 fns** as of the 1.1.6
+> regeneration. Additions are non-breaking; removals and renames need a
+> major bump.
 
 ## Open work (post-1.0)
 

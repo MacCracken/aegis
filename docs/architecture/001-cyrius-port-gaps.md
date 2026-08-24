@@ -49,7 +49,7 @@
 10. **Tempfile in `scan_disabled_by_config` / `scan_empty_binary_flagged` / `scan_world_writable_flagged` tests** — write a small `tmp_dir_new()` helper using `sys_mkdir` + pid + counter, plus `tmp_dir_drop()` for cleanup. ~25 LOC.
 11. **`prune_events` cost** — Rust's `Vec::drain(..n)` is O(n). Cyrius `vec` only exposes `vec_pop` (O(1) tail) and `vec_remove(idx)` (O(n) shift). Drop-the-front from a 10 000-cap event log via repeated `vec_remove(v, 0)` would be O(n²). Either implement a ring-buffer record (head, tail, mask, slots) or add a `vec_drain_front` helper. Match the Rust observable behavior: oldest drops, ordering preserved.
 12. **`Duration::seconds(n)` in `auto_release_at`** — `lib/chrono.cyr`'s `dur_new` is for nanosecond-resolution durations. For `auto_release_at = now + secs`, just do `clock_epoch_secs() + secs` (i64). Skip the duration record entirely.
-13. **Cargo features (`firewall`)** — moot for now. nein is deferred (see dep table); the cyrius port ships without firewall enforcement until nein modernises its language pin. When it does land, cyrius has no feature flags — either always link nein or split firewall into a sibling project. Decide then.
+13. **Cargo features (`firewall`)** — resolved. nein landed in 0.9.0 and firewall enforcement ships in-tree at `src/firewall.cyr`; cyrius has no feature flags, and the answer was to always link nein rather than split firewall into a sibling project. (Row rewritten at 1.1.6 — it had carried a stale "decide then" note since before nein landed.)
 
 ## Missing functionality to write (estimated effort)
 

@@ -15,4 +15,4 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 exec cyrius api-surface "$@" \
     --scope=project \
-    --snapshot=docs/development/api-surface-1.0.snapshot
+    --snapshot=docs/development/api-surface.snapshot

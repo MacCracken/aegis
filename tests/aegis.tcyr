@@ -4,6 +4,7 @@
 
 include "src/lib.cyr"
 include "src/firewall.cyr"
+include "src/pam.cyr"
 
 # Helper: assert that a rendered nftables Str* contains the given
 # cstr substring. Wraps both sides as Str* and delegates to
@@ -1049,6 +1050,20 @@ fn main() {
     test_p1_quarantine_accepts_good_input();
     # 0.9.5 F-6: scanner refuses to follow symlinks
     test_p1_scan_refuses_to_follow_symlink();
+
+    # ---- 1.1.6 P(-1) ----
+    test_p16_timestamp_roundtrip();
+    test_p16_config_partial_json_fails_closed();
+    test_p16_scan_clean_resealed_from_findings();
+    test_p16_max_conns_clamped();
+    test_p16_threat_count_bounds();
+    test_p16_serde_rejects_bad_agent_id();
+    test_p16_pam_validate_rule_rejects_delimiters();
+    test_p16_pam_render_fails_closed();
+    test_p16_pam_service_name_rejects_traversal();
+    test_p16_pam_passwd_rejects_non_numeric_uid();
+    test_p16_pam_parse_real_world_grammar();
+    test_p16_pam_misc();
     return assert_summary();
 }
 
@@ -1253,12 +1268,19 @@ fn test_p1_json_oversize_rejected() {
     str_builder_add_cstr(sb, "\"}");
     var huge = str_builder_build(sb);
     # Each of the 8 record parsers should reject without crashing.
-    assert_eq(security_event_from_json(str_data(huge)), 0,
+    # These take a Str, not a cstr. Passing str_data(huge) made str_len read
+    # the character bytes as a length field, so the cap was never actually
+    # exercised — the test passed for the wrong reason.
+    assert_eq(str_len(huge) > AEGIS_JSON_MAX_BYTES, 1, "test input really is oversize");
+    assert_eq(security_event_from_json(huge), 0,
       "oversize JSON rejected by security_event_from_json");
-    assert_eq(quarantine_entry_from_json(str_data(huge)), 0,
+    assert_eq(quarantine_entry_from_json(huge), 0,
       "oversize JSON rejected by quarantine_entry_from_json");
-    assert_eq(aegis_config_from_json(str_data(huge)), 0,
+    assert_eq(aegis_config_from_json(huge), 0,
       "oversize JSON rejected by aegis_config_from_json");
+    # Under the cap the same parsers must still accept.
+    assert_neq(aegis_config_from_json(str_from("{\"max_events\":7}")), 0,
+      "in-size JSON still accepted");
     return 0;
 }
 
@@ -1390,8 +1412,292 @@ fn test_p1_scan_refuses_to_follow_symlink() {
     return 0;
 }
 
+# ================================================================
+# 1.1.6 P(-1) hardening regressions
+# ================================================================
+
+# iso8601_parse takes a cstr; three serde sites wrapped it in str_from
+# first, so strlen walked the 16-byte Str header, always came out < 19,
+# and every deserialized timestamp was the -1 error sentinel. For
+# auto_release_at that -1 IS AEGIS_AUTO_RELEASE_NONE, so a deserialized
+# quarantine entry never auto-released.
+fn test_p16_timestamp_roundtrip() {
+    test_group("p16_timestamp_roundtrip");
+    var ev = security_event_new(EV_SANDBOX_ESCAPE, "src", "agent-x", THREAT_HIGH, "d");
+    var t = event_timestamp(ev);
+    assert_neq(t, 0 - 1, "fresh event has a real timestamp");
+    var ev2 = security_event_from_json(security_event_to_json(ev));
+    assert_eq(event_timestamp(ev2), t, "event timestamp survives JSON round-trip");
+
+    var r = _scan_result_new(str_from("agent:x"), ST_MANUAL);
+    _scan_result_seal(r);
+    var rt = scan_scanned_at(r);
+    var r2 = scan_result_from_json(scan_result_to_json(r));
+    assert_eq(scan_scanned_at(r2), rt, "scan scanned_at survives JSON round-trip");
+    return 0;
+}
+
+# An absent key must inherit the safe default, never 0. A partial config
+# document used to silently disable auto-quarantine — fail-open on the
+# daemon's primary enforcement switch.
+fn test_p16_config_partial_json_fails_closed() {
+    test_group("p16_config_partial_json_fails_closed");
+    var c = aegis_config_from_json(str_from("{\"max_events\":42}"));
+    assert_neq(c, 0, "partial config parses");
+    assert_eq(aegis_config_max_events(c), 42, "present key honoured");
+    assert_eq(aegis_config_quarantine_on_critical(c), 1,
+      "absent quarantine_on_critical keeps the default (fail-closed)");
+    assert_eq(aegis_config_quarantine_on_high(c), 1,
+      "absent quarantine_on_high keeps the default");
+    assert_eq(aegis_config_scan_on_execute(c), 1, "absent scan_on_execute keeps the default");
+    assert_eq(aegis_config_periodic_scan_interval_secs(c), 3600, "absent interval keeps the default");
+    # An explicit false must still win.
+    var c2 = aegis_config_from_json(str_from("{\"quarantine_on_critical\":false}"));
+    assert_eq(aegis_config_quarantine_on_critical(c2), 0, "explicit false is honoured");
+    return 0;
+}
+
+# `clean` is derived from the findings actually deserialized, not trusted
+# from the wire — a peer sending findings alongside clean:true would
+# otherwise have a failing scan read as passing.
+fn test_p16_scan_clean_resealed_from_findings() {
+    test_group("p16_scan_clean_resealed_from_findings");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"target\":\"agent:x\",\"scan_type\":\"Manual\",\"clean\":true,");
+    str_builder_add_cstr(sb, "\"findings\":[{\"severity\":\"High\",\"category\":\"c\",");
+    str_builder_add_cstr(sb, "\"description\":\"d\",\"recommendation\":\"r\"}]}");
+    var json = str_builder_build(sb);
+    var r = scan_result_from_json(json);
+    assert_neq(r, 0, "parses");
+    assert_eq(vec_len(scan_findings(r)), 1, "one finding deserialized");
+    assert_eq(scan_clean(r), 0, "clean re-sealed to false despite wire clean:true");
+    return 0;
+}
+
+fn test_p16_max_conns_clamped() {
+    test_group("p16_max_conns_clamped");
+    var p = dbpolicy_from_json(str_from("{\"max_connections_per_agent\":999999999}"));
+    assert_eq(dbpolicy_max_connections_per_agent(p), AEGIS_MAX_CONNS_HARD_CAP, "clamped to hard cap");
+    var p2 = dbpolicy_from_json(str_from("{\"max_connections_per_agent\":-5}"));
+    assert_eq(dbpolicy_max_connections_per_agent(p2), 0, "negative clamped to 0");
+    var p3 = dbpolicy_from_json(str_from("{\"max_connections_per_agent\":10}"));
+    assert_eq(dbpolicy_max_connections_per_agent(p3), 10, "in-range value preserved");
+    return 0;
+}
+
+# threat_counts is an inline i64[5] inside the daemon record, so an
+# out-of-range level was a direct OOB index — -1 lands on scan_history.
+fn test_p16_threat_count_bounds() {
+    test_group("p16_threat_count_bounds");
+    var d = aegis_new(aegis_config_default());
+    var hist_before = aegis_scan_history(d);
+    assert_eq(aegis_threat_count(d, 0 - 1), 0, "negative level reads 0, not OOB");
+    assert_eq(aegis_threat_count(d, 5),     0, "level 5 reads 0, not OOB");
+    assert_eq(aegis_threat_count(d, 99),    0, "far-out level reads 0");
+    _aegis_inc_threat_count(d, 0 - 1);
+    _aegis_inc_threat_count(d, 5);
+    assert_eq(aegis_scan_history(d), hist_before,
+      "OOB increment did not corrupt the adjacent scan_history pointer");
+    assert_eq(aegis_threat_count(d, THREAT_CRITICAL), 0, "in-range slot untouched");
+    return 0;
+}
+
+# F-7's whitelist was enforced in security_event_new but not at the
+# deserialization seam, so a wire event could carry an agent_id the
+# quarantine and release entry points would then refuse to act on.
+fn test_p16_serde_rejects_bad_agent_id() {
+    test_group("p16_serde_rejects_bad_agent_id");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent_id\":\"agent\\nx; drop\",\"source\":\"s\",");
+    str_builder_add_cstr(sb, "\"description\":\"d\",\"threat_level\":\"Critical\",");
+    str_builder_add_cstr(sb, "\"event_type\":\"PolicyViolation\"}");
+    var json = str_builder_build(sb);
+    var ev = security_event_from_json(json);
+    assert_neq(ev, 0, "event still parses");
+    assert_eq(event_agent_id(ev), 0, "injection-shaped agent_id stripped to None");
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "{\"agent_id\":\"agent-1\",\"source\":\"s\",\"description\":\"d\",");
+    str_builder_add_cstr(sb2, "\"threat_level\":\"Info\",\"event_type\":\"PolicyViolation\"}");
+    var ok = security_event_from_json(str_builder_build(sb2));
+    assert_streq(str_data(event_agent_id(ok)), "agent-1", "valid agent_id preserved");
+    return 0;
+}
+
+# The render path joins fields with TAB and lines with LF, so a control
+# byte surviving validation becomes a structural character in the emitted
+# /etc/pam.d file — an injected `auth sufficient pam_permit.so` makes every
+# password authenticate. The old denylist checked ten shell metacharacters
+# and let TAB, LF and CR straight through.
+fn test_p16_pam_validate_rule_rejects_delimiters() {
+    test_group("p16_pam_validate_rule_rejects_delimiters");
+    var good = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("pam_unix.so"), vec_new());
+    assert_eq(is_err_result(pam_validate_rule(good)), 0, "clean rule validates");
+
+    var inj = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED,
+      str_from("pam_unix.so\nauth\tsufficient\tpam_permit.so"), vec_new());
+    assert_eq(is_err_result(pam_validate_rule(inj)), 1, "newline in module rejected");
+
+    var targs = vec_new();
+    vec_push(targs, str_from("nullok\nauth\tsufficient\tpam_permit.so"));
+    var inj2 = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("pam_unix.so"), targs);
+    assert_eq(is_err_result(pam_validate_rule(inj2)), 1, "newline in arg rejected");
+
+    var tabs = vec_new();
+    vec_push(tabs, str_from("a\tb"));
+    var inj3 = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("pam_unix.so"), tabs);
+    assert_eq(is_err_result(pam_validate_rule(inj3)), 1, "tab in arg rejected");
+
+    var trav = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("../../evil.so"), vec_new());
+    assert_eq(is_err_result(pam_validate_rule(trav)), 1, "'..' in module still rejected");
+    return 0;
+}
+
+# Rendering is the injection sink, so it refuses to emit anything
+# pam_validate_rule would reject, and a config with one bad rule fails as
+# a whole rather than silently dropping the rule.
+fn test_p16_pam_render_fails_closed() {
+    test_group("p16_pam_render_fails_closed");
+    var good = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("pam_unix.so"), vec_new());
+    assert_neq(pam_render_rule(good), 0, "valid rule renders");
+
+    var bad = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED,
+      str_from("pam_unix.so\nauth\tsufficient\tpam_permit.so"), vec_new());
+    assert_eq(pam_render_rule(bad), 0, "injection rule renders as 0 (refused)");
+
+    var rules = vec_new();
+    vec_push(rules, good);
+    vec_push(rules, bad);
+    assert_eq(pam_render_config(rules), 0, "config containing a bad rule refuses as a whole");
+
+    var only_good = vec_new();
+    vec_push(only_good, good);
+    assert_neq(pam_render_config(only_good), 0, "all-good config still renders");
+    return 0;
+}
+
+# The service name is concatenated into a path, so it is a path component.
+# Unchecked, "../../tmp/fifo" escaped /etc/pam.d — and a bare O_RDONLY open
+# on a FIFO with no writer blocks in the kernel forever.
+fn test_p16_pam_service_name_rejects_traversal() {
+    test_group("p16_pam_service_name_rejects_traversal");
+    assert_eq(_pam_valid_service_name("sshd"),        1, "plain name accepted");
+    assert_eq(_pam_valid_service_name("agnos-agent"), 1, "hyphenated name accepted");
+    assert_eq(_pam_valid_service_name("../shadow"),   0, "traversal rejected");
+    assert_eq(_pam_valid_service_name(".."),          0, "'..' rejected");
+    assert_eq(_pam_valid_service_name("."),           0, "'.' rejected");
+    assert_eq(_pam_valid_service_name(".hidden"),     0, "leading dot rejected");
+    assert_eq(_pam_valid_service_name("a/b"),         0, "path separator rejected");
+    assert_eq(_pam_valid_service_name(""),            0, "empty rejected");
+    assert_eq(_pam_valid_service_name(0),             0, "null rejected");
+    assert_eq(is_err_result(pam_read_service_config("../../etc/shadow")), 1,
+      "traversing service name is refused before any open");
+    return 0;
+}
+
+# str_to_int skips non-digits and returns 0 for a wholly non-numeric field,
+# so "alice:x:root:root:..." used to parse as uid 0 / gid 0 / is_system=1.
+fn test_p16_pam_passwd_rejects_non_numeric_uid() {
+    test_group("p16_pam_passwd_rejects_non_numeric_uid");
+    var ok = pam_parse_passwd_line(str_from("alice:x:1000:1000::/home/alice:/bin/sh"));
+    assert_eq(is_err_result(ok), 0, "well-formed line parses");
+    var u = payload(ok);
+    assert_eq(pam_user_uid(u), 1000, "uid parsed");
+    assert_eq(pam_user_is_system(u), 0, "uid 1000 is not a system user");
+
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("alice:x:root:1000::/home/a:/bin/sh"))), 1,
+      "non-numeric UID rejected (used to read as root)");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("alice:x:1000:root::/home/a:/bin/sh"))), 1,
+      "non-numeric GID rejected");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("alice:x::1000::/home/a:/bin/sh"))), 1,
+      "empty UID rejected");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("alice:x:1000"))), 1,
+      "too few fields rejected");
+
+    var root = payload(pam_parse_passwd_line(str_from("root:x:0:0::/root:/bin/sh")));
+    assert_eq(pam_user_uid(root), 0, "genuine uid 0 still parses");
+    assert_eq(pam_user_is_system(root), 1, "uid 0 is a system user");
+    return 0;
+}
+
+# Real /etc/pam.d uses a leading '-' on the type and Linux-PAM's bracketed
+# control form. Both used to reject the whole file, so aegis could not read
+# the PAM stack it exists to audit.
+fn test_p16_pam_parse_real_world_grammar() {
+    test_group("p16_pam_parse_real_world_grammar");
+    var cb = str_builder_new();
+    str_builder_add_cstr(cb, "# comment\n");
+    str_builder_add_cstr(cb, "auth\trequired\tpam_unix.so\ttry_first_pass\n");
+    str_builder_add_cstr(cb, "-auth\t[success=2 default=ignore]\tpam_systemd_home.so\n");
+    str_builder_add_cstr(cb, "\nsession\toptional\tpam_keyinit.so\n");
+    var cfg = str_builder_build(cb);
+    var res = pam_parse_config(cfg);
+    assert_eq(is_err_result(res), 0, "real-world config parses");
+    var rules = payload(res);
+    assert_eq(vec_len(rules), 3, "three rules, comment and blank skipped");
+
+    var r0 = vec_get(rules, 0);
+    assert_eq(pam_rule_type(r0), PAM_TYPE_AUTH, "rule 0 type");
+    assert_eq(pam_rule_control(r0), PAM_CTL_REQUIRED, "rule 0 control");
+    assert_eq(pam_rule_optional(r0), 0, "rule 0 not optional-prefixed");
+    assert_eq(vec_len(pam_rule_args(r0)), 1, "rule 0 has one arg");
+
+    var r1 = vec_get(rules, 1);
+    assert_eq(pam_rule_optional(r1), 1, "leading '-' recorded");
+    assert_eq(pam_rule_control(r1), PAM_CTL_BRACKET, "bracket control recognised");
+    assert_streq(str_data(pam_rule_control_text(r1)), "[success=2 default=ignore]",
+      "bracket text captured verbatim");
+    assert_streq(str_data(pam_rule_module(r1)), "pam_systemd_home.so", "module after bracket");
+
+    # Round-trip: rendering must reproduce both the '-' and the bracket.
+    var out = pam_render_config(rules);
+    assert_neq(out, 0, "renders");
+    assert_eq(str_contains(out, str_from("-auth")), 1, "optional prefix reproduced");
+    assert_eq(str_contains(out, str_from("[success=2 default=ignore]")), 1,
+      "bracket expression reproduced verbatim");
+
+    assert_eq(is_err_result(pam_parse_config(str_from("auth\t[success=1\tpam_unix.so\n"))), 1,
+      "unterminated bracket rejected");
+    assert_eq(is_err_result(pam_parse_config(str_from("bogus\trequired\tpam_unix.so\n"))), 1,
+      "unknown rule type still rejected");
+    assert_eq(is_err_result(pam_parse_config(str_from("auth\tbogus\tpam_unix.so\n"))), 1,
+      "unknown control still rejected");
+    return 0;
+}
+
+fn test_p16_pam_misc() {
+    test_group("p16_pam_misc");
+    assert_eq(is_err_result(pam_validate_username("alice")), 0, "valid username");
+    assert_eq(is_err_result(pam_validate_username("_svc-1")), 0, "underscore start + hyphen");
+    assert_eq(is_err_result(pam_validate_username("")), 1, "empty rejected");
+    assert_eq(is_err_result(pam_validate_username("Alice")), 1, "uppercase rejected");
+    assert_eq(is_err_result(pam_validate_username("a/b")), 1, "slash rejected");
+    assert_eq(is_err_result(pam_validate_username("1abc")), 1, "digit start rejected");
+
+    var parts = pam_split_whitespace(str_from("  a\t\tbb   ccc  "));
+    assert_eq(vec_len(parts), 3, "runs of whitespace collapse");
+    assert_streq(str_data(vec_get(parts, 0)), "a",   "part 0");
+    assert_streq(str_data(vec_get(parts, 2)), "ccc", "part 2");
+    assert_eq(vec_len(pam_split_whitespace(str_from(""))), 0, "empty input yields no parts");
+
+    var wb = str_builder_new();
+    str_builder_add_cstr(wb, "alice pts/0 2026-03-06 10:30 (192.168.1.5)\n");
+    str_builder_add_cstr(wb, "bob tty1 2026-03-06 09:15\n");
+    var sessions = pam_parse_who_output(str_builder_build(wb));
+    assert_eq(vec_len(sessions), 2, "two sessions parsed");
+    assert_streq(str_data(pam_session_user(vec_get(sessions, 0))), "alice", "session 0 user");
+    assert_streq(str_data(pam_session_remote_host(vec_get(sessions, 0))), "192.168.1.5",
+      "parenthesised remote host unwrapped");
+    assert_eq(pam_session_remote_host(vec_get(sessions, 1)), 0, "absent remote host is 0");
+
+    assert_eq(pam_parse_rule_type(str_from("session")), PAM_TYPE_SESSION, "rule type parse");
+    assert_eq(pam_parse_rule_type(str_from("nope")), 0 - 1, "unknown rule type is -1");
+    assert_eq(pam_parse_control(str_from("sufficient")), PAM_CTL_SUFFICIENT, "control parse");
+    assert_eq(pam_parse_control(str_from("nope")), 0 - 1, "unknown control is -1");
+    return 0;
+}
+
 # Clamp: the process exit status is 8-bit, so returning assert_summary()'s
 # raw failure count reports exactly 256 / 512 / 768 failures as SUCCESS.
 var exit_code = main();
 if (exit_code > 0) { exit_code = 1; }
-syscall(60, exit_code);
+syscall(SYS_EXIT, exit_code);

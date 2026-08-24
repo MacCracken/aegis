@@ -70,7 +70,7 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 
 ### P(-1): Hardening (before features and at minor cuts)
 
-Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. Subsequent runs pair with each minor cut.
+Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. The second pass ran at 1.1.6 (`docs/audit/2026-08-24-audit.md`) — 18 findings, and the first audit of `src/pam.cyr`. Subsequent runs pair with each minor cut.
 
 1. **Cleanliness** — `./scripts/audit.sh` green; `cyrius lint`, `cyrius vet`, `cyrius fmt --check` clean. (`cyrius fmt <file>` without `--check` rewrites in place from 6.5.x on — use `--check` in any gate.)
 2. **Benchmark baseline** — `cyrius bench tests/aegis.bcyr`; append to `bench-history.csv`.
@@ -108,5 +108,5 @@ Per the v1.0.0 sign-off checklist in [`docs/development/roadmap.md`](docs/develo
 - [`docs/examples/`](docs/examples/) — Runnable examples (incl. `basic_consumer.cyr`)
 - [`docs/development/state.md`](docs/development/state.md) — Live state
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones through v1.0
-- [`docs/development/api-surface-1.0.snapshot`](docs/development/api-surface-1.0.snapshot) — Machine-checkable v1.0 baseline (gated by CI)
+- [`docs/development/api-surface.snapshot`](docs/development/api-surface.snapshot) — Machine-checkable v1.0 baseline (gated by CI)
 - [`docs/doc-health.md`](docs/doc-health.md) — Doc-currency ledger; refresh in place when docs are touched

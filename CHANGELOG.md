@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-08-24
+
+Second P(-1) hardening pass, paired with the 1.1.x minor per the CLAUDE.md
+cadence — and the **first audit of `src/pam.cyr`**, which was folded in from
+agnosys at 1.1.0, predates the 2026-05-10 audit, and had zero test coverage.
+**18 findings (F-10..F-27), all fixed here.** Full report:
+[`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md).
+
+Test suite **326 → 414 assertions** across 104 groups. API snapshot regenerated
+at **214 public fns** (was a stale 151) and renamed to a version-free filename.
+
+### Security
+
+- **F-11 (HIGH) — PAM rule validation was a denylist that omitted the render
+  delimiters.** `pam_validate_rule` rejected ten shell metacharacters but not TAB,
+  LF or CR — and `pam_render_rule` joins fields with TAB while
+  `pam_render_config` joins lines with LF. A module or argument containing a
+  newline therefore rendered as **additional PAM stack entries**; an injected
+  `auth sufficient pam_permit.so` makes every password authenticate for that
+  service. Replaced both loops with allowlists over printable ASCII plus an
+  explicit punctuation set. Same class as F-2, worse consequence.
+- **F-12 (HIGH) — `pam_read_service_config` concatenated an unvalidated service
+  name into a path and opened it blocking.** `"../../tmp/fifo"` escaped
+  `/etc/pam.d`, and a bare `O_RDONLY` open on a FIFO with no writer blocks in the
+  kernel forever — a permanent daemon hang from an unprivileged local user.
+  Added `_pam_valid_service_name` (allowlist, no `/`, no leading `.`) and put
+  `O_CLOEXEC | O_NOFOLLOW` on all three opens in the file, matching the F-6
+  scanner pattern.
+- **F-13 (HIGH) — a partial config document silently disabled auto-quarantine.**
+  `aegis_config_from_json_v` built from a zeroed record and could not distinguish
+  an absent key from an explicit `false`, so omitting `quarantine_on_critical`
+  turned off the daemon's primary enforcement switch. Deserialization now starts
+  from `aegis_config_default()` and overwrites only keys actually present.
+- **F-14 (MEDIUM) — F-7's agent_id whitelist was not enforced at the
+  deserialization seam.** A wire event could carry an `agent_id` that
+  `aegis_release_agent` would later refuse to act on, minting a quarantine entry
+  nothing could clear. Recorded as F-7 reopening at a seam the original fix did
+  not cover.
+- **F-15 (MEDIUM) — unvalidated `ThreatLevel` indexed the 5-slot inline
+  `threat_counts` array.** `-1` lands on the adjacent `scan_history` pointer.
+  Both public entry points now bounds-check.
+- **F-16 (MEDIUM) — a non-numeric UID parsed as `0` (root).** `str_to_int` skips
+  non-digits silently, so `alice:x:root:root:…` read as uid 0 / gid 0 /
+  `is_system=1`. The comment always claimed this was checked; now it is.
+- **F-17 (MEDIUM) — one-byte heap write past the `who` capture buffer.**
+  `run_capture` can return exactly its cap, so the NUL terminator landed one byte
+  past a 16384-byte allocation. Now `alloc(cap + 1)`, matching
+  `pam_read_fd_to_str`.
+- **F-18 (MEDIUM) — parsed PAM and passwd fields were not NUL-terminated.**
+  `str_new`/`str_sub` share the parent buffer without terminating, so
+  `str_data(pam_user_username(u))` — the ADR 0002 unwrap — returned
+  `"alice:x:1000:1000::/home/alice:/bin/sh"` instead of `"alice"`, disclosing the
+  rest of the entry through a field that claims to be just the username. Every
+  parsed value reaching a record field is now cloned. **Found by the new test
+  suite on its first run**, after three review passes over the same code missed it.
+- **F-20 (MEDIUM) — `scan_result_from_json_v` trusted the wire `clean` flag**
+  instead of re-sealing from the findings it had just deserialized.
+- **F-21 (MEDIUM) — `-EINTR` was treated as end-of-file**, silently truncating
+  the security config being parsed.
+- **F-22 (LOW) — `max_connections_per_agent` was the one config-shaped wire
+  integer with no clamp.** Now bounded by `AEGIS_MAX_CONNS_HARD_CAP`.
+- **F-8 is now fully closed.** It shipped in 0.9.3 as a partial fix (input-length
+  cap only) with the per-depth cap deferred upstream. That cap has landed —
+  bayan enforces `_JP_MAX_DEPTH = 128` on both descents — so aegis's length cap
+  is now defence in depth rather than the only line.
+
+### Fixed
+
+- **F-10 (HIGH) — every JSON-deserialized timestamp was `-1`.** `iso8601_parse`
+  takes a cstr and does `strlen`/`load8` directly; four sites in `src/lib.cyr`
+  handed it a `Str*` fat pointer, so `strlen` walked the 16-byte header, always
+  came out `< 19`, and the function returned its `-1` error sentinel. This hit
+  `SecurityEvent.timestamp`, `SecurityScanResult.scanned_at` and
+  `QuarantineEntry.auto_release_at` — and for `auto_release_at` the `-1` *is*
+  `AEGIS_AUTO_RELEASE_NONE`, so a deserialized quarantine entry silently became
+  one that never auto-releases. Exactly the boundary ADR 0002 exists to prevent;
+  the untyped parameter meant the compiler could not catch it. Confirmed with a
+  compiled probe: cstr → `1778416496`, `Str*` → `-1`.
+- **F-19 (MEDIUM) — `pam_parse_config` rejected real PAM grammar.** It accepted
+  neither the leading `-` on a type nor Linux-PAM's bracketed
+  `[success=1 default=bad]` control form, and a rejection fails the whole file.
+  On this host's own `/etc/pam.d` that is **14 lines plus the central
+  `system-auth`** — aegis could not read the PAM stack it exists to audit.
+- **F-27 — two quality gates were not gating.** The F-8 oversize-JSON regression
+  passed a cstr where a `Str` was required, so `str_len` read character bytes as
+  a length and the cap was never exercised — it passed for the wrong reason. And
+  all three test harnesses called `syscall(60, …)`, the Linux exit literal, which
+  is a no-op on agnos; now `SYS_EXIT`.
+
+### Changed
+
+- **`pam_rule` grows from 4 fields to 6** — `optional` (the `-` prefix) and
+  `control_text` (the raw bracket expression), so a parsed real-world config
+  renders back byte-for-byte instead of being flattened into a different policy.
+  `PAM_CTL_BRACKET` added to `PamControlId`. `pam_rule_new/4` keeps its signature.
+- **`pam_render_rule` / `pam_render_config` now fail closed**, returning `0`
+  rather than emitting a rule that `pam_validate_rule` would reject — and
+  refusing the whole document rather than silently dropping a rule, since
+  dropping a `required` line weakens the stack as surely as injecting one. This
+  is a **contract change** on two public functions, matching the F-2/F-3
+  precedent where the firewall builders return `0` instead of emitting a
+  dangerous ruleset.
+- **API snapshot regenerated: 151 → 214 public fns** (145 `lib` + 63 `pam` +
+  5 `firewall` + 1 `main`). The 151-fn file had been stale since the 1.1.0 PAM
+  fold. Renamed `api-surface-1.0.snapshot` → **`api-surface.snapshot`**: it holds
+  the current frozen surface, not the v1.0 one, and a version in the filename
+  guarantees the label goes stale again. CHANGELOG history keeps the old name.
+
+### Performance
+
+- **F-23** — the eight debug log lines in `src/lib.cyr` were fully constructed
+  before sakshi's level filter ran, then discarded at the default `SK_INFO`
+  level. Now guarded by `_aegis_log_want_debug()`, mirroring the span guard that
+  already existed.
+- **F-24** — four `map_has` + `map_get` pairs replaced with a single `map_get`
+  (values are pointers, never `0`, so non-zero *is* "present"). Two are on
+  `aegis_report_event`'s path.
+- **F-25** — `aegis_stats` counted quarantined agents by materializing the whole
+  entry vec; `map_size` is O(1) and provably equal. `_aegis_uuid_to_string`
+  ended with `str_from(hex)`, re-scanning 36 bytes whose length it had just
+  computed; now `str_new(hex, pos)`.
+
+Benchmarks (`tests/aegis.bcyr`, appended to `bench-history.csv`):
+
+| Bench | 1.1.5 | 1.1.6 |
+|---|---|---|
+| `aegis_next_id` | 839 ns | **804 ns** |
+| `security_event_new` | 2.372 µs | **2.288 µs** |
+| `aegis_report_event` | 3.253 µs | **3.210 µs** |
+
+Only `aegis_next_id` moves beyond run-to-run noise; the other two are reported
+for continuity, not as a claimed win.
+
+### Tests
+
+- **326 → 414 assertions**, 92 → 104 groups. `src/pam.cyr` is now in the test TU
+  — it had **zero** assertions before this cut, which is the direct reason six of
+  the findings above survived a release.
+- 12 new groups: timestamp round-trip, partial-config fail-closed, scan re-seal,
+  connection clamp, threat-count bounds, serde agent_id whitelist, PAM delimiter
+  rejection, PAM render fail-closed, PAM service-name traversal, PAM passwd
+  numeric UID, PAM real-world grammar round-trip, and PAM parser/validator
+  basics.
+- `scripts/audit.sh` and `.github/workflows/ci.yml` gain nothing new here; the
+  gate repairs from 1.1.5 are what made this pass's failures visible.
+
+### Notes
+
+- **Refuted during verification and deliberately not applied**: a claim that 37
+  `stik_err_*` call sites in `pam.cyr` pass a cstr where a `Str` is required —
+  the constructors accept that form and the mismatch does not exist. Recorded in
+  the audit report so a future pass does not re-derive it.
+- **Not a defect, recorded for consumers**: aegis never calls `free`, and the
+  default bump allocator's `free` is a no-op. Steady-state memory therefore
+  tracks *total events reported*, not the ring's capacity — the ADR 0005 ring
+  bounds CPU and live-set size, not process RSS.
+
+
 ## [1.1.5] — 2026-08-24
 
 Toolchain + dependency refresh onto the current AGNOS stack, plus a
