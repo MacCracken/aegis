@@ -6,6 +6,7 @@ firewall::aegis_rate_limit_agent/3
 lib::aegis_audit_ddl_operation/4
 lib::aegis_check_auto_releases/1
 lib::aegis_check_database_integrity/2
+lib::aegis_close_event_sink/0
 lib::aegis_config/1
 lib::aegis_config_auto_release_timeout_secs/1
 lib::aegis_config_default/0
@@ -27,6 +28,7 @@ lib::aegis_config_set_scan_on_install/2
 lib::aegis_config_to_json/1
 lib::aegis_config_to_json_v/1
 lib::aegis_database_kernel_recommendations/1
+lib::aegis_event_sink_active/0
 lib::aegis_events/1
 lib::aegis_events_by_threat/2
 lib::aegis_events_for_agent/2
@@ -50,6 +52,7 @@ lib::aegis_ring_push/2
 lib::aegis_scan_agent/3
 lib::aegis_scan_history/1
 lib::aegis_scan_package/2
+lib::aegis_set_event_sink/1
 lib::aegis_stats/1
 lib::aegis_stats_from_json/1
 lib::aegis_stats_from_json_v/1

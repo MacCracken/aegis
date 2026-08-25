@@ -974,6 +974,7 @@ fn main() {
     test_quarantine_and_release();
     test_release_non_quarantined();
     test_get_quarantine_entry();
+    test_event_sink_ndjson();
     test_quarantined_agents_list();
     test_quarantine_no_downgrade();
     test_quarantine_escalates_and_appends_reason();
@@ -1693,6 +1694,66 @@ fn test_p16_pam_misc() {
     assert_eq(pam_parse_rule_type(str_from("nope")), 0 - 1, "unknown rule type is -1");
     assert_eq(pam_parse_control(str_from("sufficient")), PAM_CTL_SUFFICIENT, "control parse");
     assert_eq(pam_parse_control(str_from("nope")), 0 - 1, "unknown control is -1");
+    return 0;
+}
+
+# --- 1.1.7: append-only NDJSON event sink ---------------------------------
+# aegis could always SERIALIZE an event but never wrote one anywhere: the
+# report path emitted a sakshi line to fd 2 and pushed into a process-local
+# ring that dies with the process, and the whole codebase contained zero
+# write/socket/bind syscalls. So "aegis publishes events" was not true, and
+# nothing downstream could consume them. These assertions pin the sink that
+# makes it true: off by default, one whole JSON record per line, and the
+# record must actually contain the event's fields.
+fn test_event_sink_ndjson() {
+    test_group("event sink — append-only NDJSON");
+
+    assert_eq(aegis_event_sink_active(), 0, "no sink is configured by default");
+
+    var path = "/tmp/aegis-sink-test.jsonl";
+    sys_unlink(path);
+    assert_eq(aegis_set_event_sink(path), 0, "sink opens");
+    assert_eq(aegis_event_sink_active(), 1, "sink reports active");
+
+    var d = aegis_new(aegis_config_default());
+    var e1 = security_event_new(EV_POLICY_VIOLATION, "unit", 0, THREAT_HIGH, "first anomaly");
+    aegis_report_event(d, e1);
+    var e2 = security_event_new(EV_POLICY_VIOLATION, "unit", 0, THREAT_LOW, "second anomaly");
+    aegis_report_event(d, e2);
+    aegis_close_event_sink();
+    assert_eq(aegis_event_sink_active(), 0, "sink reports inactive after close");
+
+    # Read it back. Newline framing is the whole contract: a consumer that
+    # stops at the last complete \n must never see a torn record.
+    var buf[8192];
+    var n = file_read_all(path, &buf, 8191);
+    assert(n > 0, "sink file has content");
+    store8(&buf + n, 0);
+
+    var nl = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(&buf + i) == 10) { nl = nl + 1; }
+        i = i + 1;
+    }
+    assert_eq(nl, 2, "two reported events produced exactly two lines");
+    assert_eq(load8(&buf + n - 1), 10, "file ends on a complete record");
+
+    assert(strstr(&buf, "first anomaly") >= 0,  "first event's description is in the stream");
+    assert(strstr(&buf, "second anomaly") >= 0, "second event's description is in the stream");
+    assert(strstr(&buf, "PolicyViolation") >= 0, "event_type is serialized");
+    assert(strstr(&buf, "High") >= 0, "threat_level is serialized");
+
+    # Appending, not truncating: a second session must extend the file.
+    assert_eq(aegis_set_event_sink(path), 0, "sink reopens");
+    var e3 = security_event_new(EV_POLICY_VIOLATION, "unit", 0, THREAT_LOW, "third anomaly");
+    aegis_report_event(d, e3);
+    aegis_close_event_sink();
+    var buf2[8192];
+    var n2 = file_read_all(path, &buf2, 8191);
+    assert(n2 > n, "reopening appends rather than truncating");
+
+    sys_unlink(path);
     return 0;
 }
 

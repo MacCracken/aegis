@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.7] — 2026-08-24 — aegis actually publishes events now
+
+aegis could always **serialize** a security event — `security_event_to_json`
+(`src/lib.cyr:2075`) produces a complete object — but nothing ever wrote those
+bytes anywhere. `aegis_report_event` emitted one sakshi line to fd 2 and pushed
+the event into a process-local heap ring that dies with the process, and the
+codebase contained **zero** `sys_write` / `sys_socket` / `sys_bind` / `O_CREAT`
+calls: every one of its five `sys_open` sites was `O_RDONLY`. So a security
+event was observable only by reading aegis's own stderr, only while it ran, and
+no separate process could consume events at all.
+
+This is the smallest change that makes them consumable.
+
+### Added
+
+- **`aegis_set_event_sink(path)` / `aegis_close_event_sink()` /
+  `aegis_event_sink_active()`** — an optional append-only **NDJSON** event sink.
+  When configured, every event reported through `aegis_report_event` is appended
+  as one JSON object followed by a newline. Off by default: aegis must not create
+  files nobody asked for.
+- **`AEGIS_EVENT_LOG`** — if set to a non-empty path, the daemon opens it as the
+  sink at startup. An unopenable path is fatal (`sakshi_error` + exit 1) rather
+  than silently dropping events.
+
+### Why a file rather than a socket
+
+It needs no daemon running for a consumer to read history, it survives producer
+restarts, a missing file is an empty stream rather than a `connect()` error, and
+it can be tailed by a pure-syscall reader with **no libc** — which is what lets
+chakshu consume it from its no-libc `shu` binary rather than the heavier
+libc-dependent `shu-ai`.
+
+**Framing is the contract.** The record and its newline are written in **one**
+`sys_write`; `O_APPEND` makes the offset update and the write atomic, so
+concurrent producers interleave whole records and never fragments. A consumer
+that stops at the last complete `\n` can therefore never observe a torn record,
+with no lock and no watermark file. Splitting that into two writes would
+reintroduce exactly the tearing the framing exists to prevent.
+
+Sink files are created mode **0600** — events name agents, paths and threat
+levels, so they are not world-readable by default.
+
+### Record format
+
+```json
+{"id":"d3937571-0fed-4939-aa59-148bf012cbaa","timestamp":"2026-08-25T00:49:17Z","event_type":"MaliciousPayload","source":"phylax","agent_id":null,"threat_level":"Critical","description":"entropy 7.94 in /tmp/x","metadata":{},"resolved":false}
+```
+
+Unchanged from `security_event_to_json` — this release writes the bytes it was
+already able to produce, it does not redefine them.
+
+### Verified
+
+- `tests/aegis.tcyr` **427/427** (was 414): the new group asserts the sink is off
+  by default, that two reported events produce exactly two lines, that the file
+  ends on a complete record, that the event's type/threat/description actually
+  appear in the stream, and that reopening **appends** rather than truncates.
+- Daemon behaviour: no `AEGIS_EVENT_LOG` → starts clean, exit 0; unopenable path
+  → error + exit 1; valid path → file created mode 0600.
+- `scripts/check-api-surface.sh`: 214 → **217** public fns, **non-breaking**
+  (three additions, nothing removed or changed); snapshot regenerated.
+
+### Note for consumers
+
+This ships the **producer**. chakshu v0.8.0 is the first consumer (`shu --watch`
+tails this file). aegis's own daemon is still a stub that reports no events of
+its own — the sink is exercised by anything calling `aegis_report_event`, and
+wiring real detection into the daemon loop remains open upstream work.
+
 ## [1.1.6] — 2026-08-24
 
 Second P(-1) hardening pass, paired with the 1.1.x minor per the CLAUDE.md

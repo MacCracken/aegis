@@ -476,6 +476,11 @@ fn _aegis_report_event_inner(d, ev) {
     _aegis_log_kv_cstr(sb, "kind",     event_type_label(event_kind(ev)));
     _aegis_log_emit_info(sb);
 
+    # 1.1.7: also append the event to the NDJSON sink when one is configured.
+    # This is what makes events consumable by another process; the sakshi line
+    # above is human-facing and the ring below dies with the process.
+    _aegis_event_sink_write(ev);
+
     _aegis_inc_threat_count(d, threat);
     aegis_ring_push(aegis_events(d), ev);
 
@@ -974,6 +979,75 @@ var _AEGIS_O_NOFOLLOW = 131072;
 #ifdef CYRIUS_TARGET_AGNOS
 var O_CLOEXEC = 524288;
 #endif
+
+# --- event sink: append-only NDJSON (1.1.7) ---------------------------
+#
+# aegis has always been able to SERIALIZE a security event —
+# `security_event_to_json` (below) produces a complete object — but nothing
+# ever wrote those bytes anywhere. `aegis_report_event` logged one sakshi line
+# to fd 2 and pushed the event into a process-local heap ring that dies with
+# the process, so a security event was observable only by reading aegis's own
+# stderr, and only while it ran. There was no way for another process to
+# consume events at all: aegis contained zero write/socket/bind syscalls.
+#
+# This is the smallest thing that makes events consumable. Callers opt in with
+# `aegis_set_event_sink(path)`; every reported event is then appended as one
+# JSON object followed by a newline.
+#
+# Why NDJSON over an append-only file rather than a socket: it needs no daemon
+# to be running for a consumer to read history, it survives producer restarts,
+# a missing file is simply an empty stream rather than a connect() error, and
+# it can be tailed by a pure-syscall reader with no libc — which is what lets
+# chakshu consume it from its no-libc `shu` binary. Newline framing over
+# O_APPEND is what makes it safe without a lock: a reader that stops at the
+# last complete newline can never observe a torn record.
+#
+# The record and its newline are written in ONE sys_write. O_APPEND guarantees
+# the offset update and the write are atomic, so concurrent producers interleave
+# whole records, never fragments. Splitting this into two writes would
+# reintroduce exactly the tearing the framing exists to prevent.
+var _AEGIS_O_WRONLY = 1;
+var _AEGIS_O_CREAT  = 64;
+var _AEGIS_O_APPEND = 1024;
+
+var _aegis_event_fd = 0 - 1;
+
+# Open (or create) `path_cstr` as the append-only event sink. Mode 0600: events
+# name agents, paths and threat levels, so they are not world-readable by
+# default. Returns 0 on success, or the negative open errno.
+fn aegis_set_event_sink(path_cstr) {
+    aegis_close_event_sink();
+    var fd = sys_open(path_cstr,
+                      _AEGIS_O_WRONLY | _AEGIS_O_CREAT | _AEGIS_O_APPEND | O_CLOEXEC,
+                      384);
+    if (fd < 0) { return fd; }
+    _aegis_event_fd = fd;
+    return 0;
+}
+
+# Close the sink if one is open. Idempotent.
+fn aegis_close_event_sink() {
+    if (_aegis_event_fd >= 0) {
+        sys_close(_aegis_event_fd);
+        _aegis_event_fd = 0 - 1;
+    }
+    return 0;
+}
+
+# Is a sink currently open? Consumers and tests use this rather than reaching
+# for the private fd.
+fn aegis_event_sink_active() {
+    if (_aegis_event_fd >= 0) { return 1; }
+    return 0;
+}
+
+# Append one event as a single NDJSON record. No-op when no sink is configured,
+# which is the default — aegis must not create files nobody asked for.
+fn _aegis_event_sink_write(ev) {
+    if (_aegis_event_fd < 0) { return 0; }
+    var line = str_cat(security_event_to_json(ev), str_from("\n"));
+    return sys_write(_aegis_event_fd, str_data(line), str_len(line));
+}
 
 # Stat a path WITHOUT following symlinks. Pattern: open(O_RDONLY |
 # O_CLOEXEC | O_NOFOLLOW) → fstat(fd) → close(fd). Returns 1 on

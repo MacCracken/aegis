@@ -20,6 +20,24 @@ fn main() {
     # lands.
     sakshi_set_level(SK_INFO);
     sakshi_set_output_fd(2);
+
+    # 1.1.7: optional append-only NDJSON event sink. Off unless AEGIS_EVENT_LOG
+    # names a path — aegis must not create files nobody asked for. When set,
+    # every event reported through aegis_report_event is appended as one JSON
+    # object per line, which is what lets a separate process (chakshu --watch)
+    # consume the stream without aegis needing to be running.
+    var sink = getenv("AEGIS_EVENT_LOG");
+    if (sink != 0) {
+        if (strlen(sink) > 0) {
+            var rc = aegis_set_event_sink(sink);
+            if (rc < 0) {
+                var em = "aegis: cannot open AEGIS_EVENT_LOG for append";
+                sakshi_error(em, strlen(em));
+                return 1;
+            }
+        }
+    }
+
     println("aegis ready");
     return 0;
 }
