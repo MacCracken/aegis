@@ -1017,9 +1017,7 @@ var _aegis_event_fd = 0 - 1;
 # default. Returns 0 on success, or the negative open errno.
 fn aegis_set_event_sink(path_cstr) {
     aegis_close_event_sink();
-    var fd = sys_open(path_cstr,
-                      _AEGIS_O_WRONLY | _AEGIS_O_CREAT | _AEGIS_O_APPEND | O_CLOEXEC,
-                      384);
+    var fd = sys_open(path_cstr, _AEGIS_O_WRONLY | _AEGIS_O_CREAT | _AEGIS_O_APPEND | O_CLOEXEC, 384);
     if (fd < 0) { return fd; }
     _aegis_event_fd = fd;
     return 0;
