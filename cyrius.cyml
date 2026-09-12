@@ -42,5 +42,5 @@ modules = ["src/types.cyr", "src/error.cyr"]
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
 path = "../nein"
-tag = "1.6.10"
+tag = "1.6.11"
 modules = ["dist/nein.cyr"]
