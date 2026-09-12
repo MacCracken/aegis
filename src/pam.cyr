@@ -722,9 +722,9 @@ fn pam_list_users(): i64 {
             idx = idx + 1;
             continue;
         }
-        var res = pam_parse_passwd_line(line);
-        if (is_ok(res) == 1) {
-            vec_push(users, payload(res));
+        var ptag, puser = pam_parse_passwd_line(line);
+        if (is_ok(ptag) == 1) {
+            vec_push(users, puser);
         }
         # Skip malformed lines silently
         idx = idx + 1;
@@ -745,11 +745,10 @@ fn pam_list_sessions(): i64 {
     # allocation. pam_read_fd_to_str already allocates cap+1; this site did
     # not.
     var buf = alloc(_PAM_WHO_CAP + 1);
-    var res = run_capture("/usr/bin/who", 0, 0, buf, _PAM_WHO_CAP);
-    if (is_err_result(res) == 1) {
+    var rtag, nbytes = run_capture("/usr/bin/who", 0, 0, buf, _PAM_WHO_CAP);
+    if (is_err_result(rtag) == 1) {
         return stik_err_io("failed to run who command");
     }
-    var nbytes = payload(res);
     store8(buf + nbytes, 0);
     var output = str_new(buf, nbytes);
     var sessions = pam_parse_who_output(output);
@@ -872,8 +871,8 @@ fn pam_validate_rule(rule): i64 {
 # Lookup a user in /etc/passwd by name.
 # Returns Result: Ok(user_info_ptr) or Err.
 fn pam_get_user_info(username): i64 {
-    var res = pam_validate_username(username);
-    if (is_err_result(res) == 1) { return res; }
+    var vtag, verr = pam_validate_username(username);
+    if (is_err_result(vtag) == 1) { return Err(verr); }
 
     var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
     if (fd < 0) {

@@ -1599,9 +1599,8 @@ fn test_p16_pam_service_name_rejects_traversal() {
 # so "alice:x:root:root:..." used to parse as uid 0 / gid 0 / is_system=1.
 fn test_p16_pam_passwd_rejects_non_numeric_uid() {
     test_group("p16_pam_passwd_rejects_non_numeric_uid");
-    var ok = pam_parse_passwd_line(str_from("alice:x:1000:1000::/home/alice:/bin/sh"));
-    assert_eq(is_err_result(ok), 0, "well-formed line parses");
-    var u = payload(ok);
+    var oktag, u = pam_parse_passwd_line(str_from("alice:x:1000:1000::/home/alice:/bin/sh"));
+    assert_eq(is_err_result(oktag), 0, "well-formed line parses");
     assert_eq(pam_user_uid(u), 1000, "uid parsed");
     assert_eq(pam_user_is_system(u), 0, "uid 1000 is not a system user");
 
@@ -1614,7 +1613,8 @@ fn test_p16_pam_passwd_rejects_non_numeric_uid() {
     assert_eq(is_err_result(pam_parse_passwd_line(str_from("alice:x:1000"))), 1,
       "too few fields rejected");
 
-    var root = payload(pam_parse_passwd_line(str_from("root:x:0:0::/root:/bin/sh")));
+    var roottag, root = pam_parse_passwd_line(str_from("root:x:0:0::/root:/bin/sh"));
+    assert_eq(is_err_result(roottag), 0, "root line parses");
     assert_eq(pam_user_uid(root), 0, "genuine uid 0 still parses");
     assert_eq(pam_user_is_system(root), 1, "uid 0 is a system user");
     return 0;
@@ -1631,9 +1631,8 @@ fn test_p16_pam_parse_real_world_grammar() {
     str_builder_add_cstr(cb, "-auth\t[success=2 default=ignore]\tpam_systemd_home.so\n");
     str_builder_add_cstr(cb, "\nsession\toptional\tpam_keyinit.so\n");
     var cfg = str_builder_build(cb);
-    var res = pam_parse_config(cfg);
-    assert_eq(is_err_result(res), 0, "real-world config parses");
-    var rules = payload(res);
+    var cfgtag, rules = pam_parse_config(cfg);
+    assert_eq(is_err_result(cfgtag), 0, "real-world config parses");
     assert_eq(vec_len(rules), 3, "three rules, comment and blank skipped");
 
     var r0 = vec_get(rules, 0);

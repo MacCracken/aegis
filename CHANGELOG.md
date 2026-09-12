@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.35` → `6.6.2`.** Migrated to the `Result` value form:
+  2 first-party file(s) changed. Every surface re-verified — build, tests, and any
+  bench/fuzz/distlib target the repo ships.
+
+
 ## [1.1.7] — 2026-08-24 — aegis actually publishes events now
 
 aegis could always **serialize** a security event — `security_event_to_json`
