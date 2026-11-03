@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-11-03
+
+Toolchain and dependency refresh. No aegis source change: the 217-fn public
+surface, every wire format and the firewall ruleset shape are unchanged.
+
+### Changed
+
+- **Toolchain `6.6.2` → `6.6.20`.**
+- **agnostik `1.4.0` → `1.7.1`**, the latest agnostik tag pinned to 6.6.20. The
+  three fns aegis calls — `agent_id_new`, `stik_err_invalid_argument`,
+  `stik_err_io` — are unchanged.
+- **nein `1.6.11` → `1.7.1`**, the only nein tag pinned to 6.6.20. nein 1.7.0
+  renamed `ERR_NFT_FAILED` / `ERR_INVALID_RULE` / `ERR_TABLE_NOT_FOUND` /
+  `ERR_CHAIN_NOT_FOUND` to `NEIN_ERR_*`; aegis references none of them.
+  nein's own pins move with it: libro `2.10.0` → `2.10.8`, majra `2.7.1` →
+  `2.9.3`, bote-core `3.3.7` → `3.3.17`, sigil `3.12.16` → `3.13.10`, patra
+  `1.14.1` → `1.15.2`. None is reachable from aegis; all are DCE-dropped.
+- **`cyrius.lock` regenerated from the tags**, resolved with no sibling
+  checkouts present (CI's resolution, so the `path` overrides played no
+  part). 62 files locked, `cyrius deps --verify` 62 / 0. The lock now
+  commit-pins agnostik and nein themselves as well as nein's transitives;
+  the 1.1.8 lock carried rows for the transitives only.
+
+### Verified
+
+- `./scripts/audit.sh` green on every gate: syntax, fmt, lint, vet,
+  api-surface (matches the 217-fn snapshot), DCE build, ELF, smoke, tests
+  **428 / 428**, fuzz, bench, security scan, docs.
+- **6.6.20 binds every call to a redefined fn's LAST definition.** The 6.6.20
+  build reports **zero** duplicate-fn warnings (the warning is unconditional
+  on a redefinition), so nothing that runs changes. The one same-arity
+  duplicate cyrius's 6.6.3 sweep recorded here is gone.
+- **6.6.18 shrank nein's `.deps` sidecar to `syscalls`.** aegis already
+  declares every stdlib leaf its source includes, so no `[deps] stdlib` entry
+  was needed.
+- **The event sink still appends across a restart** (the check the roadmap
+  asked for once the pin crossed 6.6.6): two records, process exit, a new
+  process writes a third. All three are present in order, the file is mode
+  0600 and ends on a complete record.
+- `cyrius deps` prints `refusing to overwrite stdlib leaf 'sigil'`. It is
+  benign: the 6.6.20 stdlib snapshot folds sigil 3.13.10, the same version
+  nein pins, so the kept copy and the skipped one are the same release.
+
+### Known — build warnings surfaced on 6.6.20, not fixed here
+
+- **15 × `json_v_obj_get` is deprecated** (`src/lib.cyr`, the five
+  `_aegis_jv_get_*` / `_aegis_jv_set_bool_into` readers and ten direct calls).
+  The replacement is `bayan_json_v_obj_get_by_cstr`. Every key at these sites
+  is a literal, so the fix is mechanical.
+- **2 × a `Str`'s data pointer passed to `streq`** —
+  `aegis_events_for_agent` (`src/lib.cyr:584`) and
+  `_aegis_resolve_event_inner` (`:637`). Not a live bug: a probe confirmed
+  that both `str_from` and bayan's parsed strings are NUL-terminated at their
+  length. But the comparison leans on that implementation detail, and
+  `str_eq_cstr` states the intent without it.
+
+Both are tracked in [`docs/development/roadmap.md`](docs/development/roadmap.md).
+
 ## [1.1.8] - 2026-09-11
 
 ### Changed

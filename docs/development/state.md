@@ -7,6 +7,19 @@
 
 ## Version
 
+**1.1.9** — toolchain + dependency refresh (2026-11-03): cyrius pin `6.6.2` →
+`6.6.20`, agnostik `1.4.0` → `1.7.1`, nein `1.6.11` → `1.7.1` — for each, the
+latest tag pinned to 6.6.20. No aegis source change; the 217-fn surface, every
+wire format and the firewall ruleset shape are unchanged; 428 tests pass.
+`cyrius.lock` regenerated from the tags. See CHANGELOG `[1.1.9]`.
+
+**1.1.8** — toolchain `6.5.35` → `6.6.2` (2026-09-11): the `Result` value-form
+migration (2 files), nein `1.6.10` → `1.6.11`.
+
+**1.1.7** — append-only NDJSON event sink (2026-08-24):
+`aegis_set_event_sink` / `aegis_close_event_sink` / `aegis_event_sink_active`
+plus the `AEGIS_EVENT_LOG` daemon switch. 214 → 217 public fns, non-breaking.
+
 **1.1.6** — second P(-1) hardening pass (2026-08-24), paired with the 1.1.x minor.
 **18 findings (F-10..F-27), all fixed** — see
 [`../audit/2026-08-24-audit.md`](../audit/2026-08-24-audit.md). Four HIGH: every
@@ -39,24 +52,28 @@ changed to in-place-plus-`--check` in 6.5.x, so the fmt gate in `audit.sh` and
 
 ## Toolchain
 
-- **Cyrius pin**: `6.5.35` (in `cyrius.cyml [package].cyrius`). Bumped from
-  `6.4.66` at 1.1.5. Two 6.5.x behaviours matter to this repo:
-  - **`cyrius fmt <file>` rewrites in place and prints nothing.** The
-    non-mutating gate is `cyrius fmt --check <file>` (non-zero exit, names
-    the first differing line). The pre-6.5 idiom of diffing the command's
-    stdout against the file reports every file as drifted *and* rewrites it
-    as a side effect. `scripts/audit.sh` and `ci.yml` use `--check`.
-  (Note: `cyrius deps` draining each dep's own manifest is **not** new in
-  6.5.x — that BFS has been in place since v5.7.14. It is why the libro/bote
-  declarations removed at 1.1.5 were never needed; see Dependencies below.)
-  Composing nein 1.6.10's bundle set leaves three benign build warnings, none
-  gated by `audit.sh` and none fixable from aegis source:
-  - two cross-bundle duplicate symbols, last-definition-wins —
-    `majra._sub_new` vs `libro._sub_new`, and `sigil._hex_nibble` vs
-    `agnostik_types._hex_nibble`;
-  - `./lib/ shadows version-pinned … patra 1.13.9 (pinned: 1.13.10)` — nein
-    pins patra one patch behind the 6.5.35 stdlib snapshot. Dead code for
-    aegis; nein's pin to advance;
+- **Cyrius pin**: `6.6.20` (in `cyrius.cyml [package].cyrius`). Bumped from
+  `6.6.2` at 1.1.9. Behaviours that matter to this repo:
+  - **`cyrius fmt <file>` rewrites in place and prints nothing** (6.5.x). The
+    non-mutating gate is `cyrius fmt --check <file>`. `scripts/audit.sh` and
+    `ci.yml` use `--check`.
+  - **A redefined fn binds every call to its LAST definition** (6.6.20). The
+    build reports zero duplicate-fn warnings, so this changes nothing here
+    today; a duplicate that appears later is worth reading, not ignoring.
+  - **Consumers declare their own stdlib leaves** (6.6.18). Dep sidecars are
+    now compile-derived, and nein's shrank to `syscalls`; aegis's 19 declared
+    leaves already cover its includes.
+  - The pin is past **6.6.6**, the floor for a PE build's `O_APPEND` to append
+    rather than overwrite. aegis ships no PE target; the event sink's
+    restart-append path was re-verified at 1.1.9 anyway.
+- **Build warnings on 6.6.20** — none gated by `audit.sh`:
+  - aegis source: 15 × deprecated `json_v_obj_get` and 2 × a `Str` data
+    pointer passed to `streq` (`src/lib.cyr:584`, `:637`). Tracked in
+    [`roadmap.md`](roadmap.md);
+  - vendored: `lib/sigil.cyr`'s over-budget array local gets static storage,
+    and one large-static-data note. Dead code for aegis;
+  - `cyrius deps`: `refusing to overwrite stdlib leaf 'sigil'` — the stdlib
+    snapshot folds sigil 3.13.10, the same version nein pins. Benign;
   - ~5.1k unreachable fns, all DCE-dropped.
 - **CI**: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — toolchain install, `cyrius deps`, syntax check (`--with-deps`), fmt (`--check`), lint, vet, **api-surface drift gate** (0.9.2+), DCE build, ELF check, aarch64 cross-build (best-effort), smoke, full test suite, fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
 - **Release**: [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — runs CI, verifies tag matches `VERSION`, builds x86_64 + aarch64 (best-effort), packages source tarball + `aegis-<ver>-lib.cyr` + binaries + `SHA256SUMS`. `0.x` tags ship as prerelease.
@@ -78,16 +95,20 @@ bounds CPU and live-set size, not process RSS.
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **414 passed / 0 failed** across 104 test groups (326/92 before 1.1.6). 12 groups added at 1.1.6 covering every F-10..F-27 regression; `src/pam.cyr` entered the test TU at 1.1.6 with 7 dedicated groups after having zero assertions. |
+| `tests/aegis.tcyr` | **428 passed / 0 failed** across 105 test groups on 6.6.20 (414/104 at 1.1.6; the 1.1.7 event-sink group added the rest). 12 groups added at 1.1.6 covering every F-10..F-27 regression; `src/pam.cyr` entered the test TU at 1.1.6 with 7 dedicated groups after having zero assertions. |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
-| `tests/aegis.bcyr` | 3 benches on 6.5.35: `aegis_next_id` 804 ns, `security_event_new` 2.288 µs, `aegis_report_event` 3.210 µs (avg, 50–100k iter). Only `aegis_next_id` moved beyond noise at 1.1.6 (F-25). 6.5.x's harness subtracts a measured timer floor, so these are not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
+| `tests/aegis.bcyr` | 3 benches on 6.6.20: `aegis_next_id` 833 ns, `security_event_new` 2.401 µs, `aegis_report_event` 3.302 µs (avg, 50–100k iter) — +3–5% on the 1.1.6 rows, from a single run on a shared host, so not separated from noise. 6.5.x's harness subtracts a measured timer floor, so these are not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
 
 ## Dependencies
 
 `cyrius.cyml` is a build manifest and holds declarations only; this section is
 where the rationale lives. Note that a `[deps.X]` stanza carrying both `path`
 and `tag` uses the **local sibling checkout** and ignores the tag entirely —
-CI has no siblings and resolves the tag, so both must stay correct.
+CI has no siblings and resolves the tag, so both must stay correct. At 1.1.9
+the sibling checkouts (agnostik 2.0.0, nein 1.8.2) are ahead of the tags and
+pin cyrius 6.7.18, so a `cyrius deps` run here — `scripts/audit.sh` runs one —
+vendors them, not the tags. The committed `cyrius.lock` was resolved with no
+siblings present, as CI resolves it.
 
 Direct (declared in `cyrius.cyml`):
 
@@ -101,22 +122,23 @@ Direct (declared in `cyrius.cyml`):
   packaging, not a declaration. Seven transitive-only entries added at 1.1.4
   (`thread`, `thread_local`, `freelist`, `ct`, `keccak`, `slice`, `sync`) were
   removed at 1.1.5; `cyrius deps` reads the dist bundles' sidecars itself.
-- **agnostik (v1.4.0)** — `src/types.cyr` for `agent_id_new` (UUID v4 over
+- **agnostik (v1.7.1)** — `src/types.cyr` for `agent_id_new` (UUID v4 over
   `getrandom`); `src/error.cyr` for `stik_err_invalid_argument` /
   `stik_err_io`, the two constructors aegis's PAM path invokes. `lib/agnostik_*.cyr`
   is resolved by `cyrius deps` — not committed.
-- **nein (v1.6.10)** — `dist/nein.cyr` single-file bundle (`firewall_*` /
+- **nein (v1.7.1)** — `dist/nein.cyr` single-file bundle (`firewall_*` /
   `table_*` / `chain_*` / `rule_*` / `match_*` / `verdict_*` API + constants).
   Used by `src/firewall.cyr` to build nftables rulesets for `QA_ISOLATE` /
   `QA_RATELIMIT` quarantine actions and the hardened-host baseline.
 
 Transitive (resolved from nein's manifest, **not declared by aegis**):
 
-nein 1.6.10 pins its own audit-chain and MCP deps — libro `2.8.8`, majra
-`2.6.7`, bote-core `3.3.2`, sigil `3.12.9`, patra `1.13.9` — and `cyrius deps`
+nein 1.7.1 pins its own audit-chain and MCP deps — libro `2.10.8`, majra
+`2.9.3`, bote-core `3.3.17`, sigil `3.13.10`, patra `1.15.2` — and `cyrius deps`
 walks that graph. None is referenced by aegis source; all are DCE-stripped.
-Bumping them is nein's call — note nein 1.6.10 itself pins cyrius `6.5.33`,
-two patches behind aegis. aegis declared libro and bote directly at 1.1.4 as a
+Bumping them is nein's call. nein 1.7.1, agnostik 1.7.1, libro, majra and
+bote-core pin cyrius `6.6.20`, the same as aegis; sigil and patra pin `6.6.18`.
+`cyrius.lock` commit-pins all seven. aegis declared libro and bote directly at 1.1.4 as a
 workaround for a source-graph walk that `cyrius deps` had not done since
 v5.7.14 anyway; the declarations' only real effect was to pin aegis's own libro
 alongside nein's, dragging libro's thin `sigil_*` sub-bundles into the same
@@ -130,8 +152,8 @@ _None yet_ — daimon and argonaut are the planned downstream consumers; pull `s
 ## API surface
 
 [`api-surface.snapshot`](api-surface.snapshot) holds the frozen public surface —
-**214 public fns** (145 `lib` + 63 `pam` + 5 `firewall` + 1 `main`), regenerated
-at 1.1.6. It was stale at 151 fns from 1.0.0 until then: the 1.1.0 PAM fold added
+**217 public fns** (148 `lib` + 63 `pam` + 5 `firewall` + 1 `main`), regenerated
+at 1.1.7 for the three event-sink fns (214 at 1.1.6). It was stale at 151 fns from 1.0.0 until then: the 1.1.0 PAM fold added
 its symbols without a snapshot update, and the drift gate passes additions
 silently because they are non-breaking under SemVer, so nothing forced the issue.
 

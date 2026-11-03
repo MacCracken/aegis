@@ -8,11 +8,12 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**1.1.6** — current. The public API surface is SemVer-stable: additions are
-non-breaking, removals or renames need a major bump. 1.1.x has been the PAM fold
-(from the agnosys → agnodrm decomposition), toolchain and dependency refreshes,
-and — at 1.1.6 — a P(-1) hardening pass that closed 18 findings, four of them
-HIGH. See [`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md).
+**1.1.9** — current, on cyrius 6.6.20. The public API surface is SemVer-stable:
+additions are non-breaking, removals or renames need a major bump. 1.1.x has been
+the PAM fold (from the agnosys → agnodrm decomposition), toolchain and dependency
+refreshes, an append-only NDJSON event sink (1.1.7), and — at 1.1.6 — a P(-1)
+hardening pass that closed 18 findings, four of them HIGH. See
+[`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md).
 
 Shipped surface: nein firewall integration (`aegis_isolate_agent` /
 `aegis_rate_limit_agent` / `aegis_hardened_host` + render/validate wrappers),

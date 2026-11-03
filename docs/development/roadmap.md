@@ -8,7 +8,7 @@
 >
 > v1.0.0 cut on 2026-05-10. The API at
 > [`api-surface.snapshot`](api-surface.snapshot) is the SemVer-stable
-> contract from that point forward — **214 fns** as of the 1.1.6
+> contract from that point forward — **217 fns** as of the 1.1.7
 > regeneration. Additions are non-breaking; removals and renames need a
 > major bump.
 
@@ -45,6 +45,22 @@ lands, or when a P(-1) follow-up cycle batches them.
   comment. Single grep target. Land the constant in cyrius stdlib, then
   swap the local for the global.
 
+### Build warnings surfaced at the 6.6.20 pin (1.1.9)
+
+Neither is gated by `audit.sh`; both are aegis source, so both are aegis's
+to fix. Each is a separate change.
+
+- **15 × deprecated `json_v_obj_get`** in `src/lib.cyr` — the five
+  `_aegis_jv_get_*` / `_aegis_jv_set_bool_into` readers and ten direct
+  calls in the `*_from_json_v` parsers. Swap to
+  `bayan_json_v_obj_get_by_cstr`; every key is a literal.
+- **2 × a `Str` data pointer passed to `streq`** —
+  `aegis_events_for_agent` (`src/lib.cyr:584`) and
+  `_aegis_resolve_event_inner` (`:637`). Not a live bug: `str_from` and
+  bayan's parsed strings are both NUL-terminated at their length (probed at
+  1.1.9). Swap to `str_eq_cstr(s, cstr)`, which compares by length and does
+  not lean on that.
+
 ### Observability
 
 - **Trace-ID propagation** (`sakshi_trace_set` for cross-process
@@ -67,57 +83,3 @@ When a v1.x or v2.0 milestone is being planned, add a section above with
 the scope and a few load-bearing requirements. Don't pre-populate empty
 buckets ("Future") — those rot. Add work items here only when they're
 concrete enough to act on.
-
-## Moving the cyrius pin to 6.6.6
-
-Current pin: `cyrius = "6.6.2"` (`cyrius.cyml`).
-
-aegis is the repo in this group whose correctness argument leans hardest on `O_APPEND`, so the
-Windows half of 6.6.6 is worth reading even though it does not currently reach here. The audit
-log opens at `src/lib.cyr:1020` with a raw
-`sys_open(path_cstr, _AEGIS_O_WRONLY | _AEGIS_O_CREAT | _AEGIS_O_APPEND | O_CLOEXEC, 384)`
-(`_AEGIS_O_APPEND = 1024`, `src/lib.cyr:1011`), and the comment immediately above it at
-`:1002-1005` states the invariant plainly: *"O_APPEND is what makes it safe without a lock …
-the record and its newline are written in ONE sys_write."* Before 6.6.6 a PE build's `O_APPEND`
-did not append — it overwrote from offset 0 — which would have destroyed that invariant and
-the security log with it.
-
-**aegis is not exposed today**, and that was checked rather than assumed: no PE target
-(`CYRIUS_TARGET_AGNOS` is the only `CYRIUS_TARGET_*` in `src/`), CI is `ubuntu-latest` only,
-and `release.yml` ships x86_64 + aarch64 with no `windows-*` runner or `.exe` asset. The
-practical instruction is forward-looking: **do not build aegis for Windows on a cyrius below
-6.6.6.** If a PE target is ever added, 6.6.6 is the floor, and this is the first thing to
-re-verify.
-
-Everything else is a plain pin bump. What was checked, and found empty:
-
-- The only other opens in `src/` are read-only — `src/pam.cyr:685`, `:703`, `:877`, and
-  `src/lib.cyr:1063`, all `O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW`. No `O_TRUNC` anywhere
-  outside the vendored `lib/`.
-- None of the new compile errors in item 3 have sites: no `async fn`, no `operator` fn, no
-  `ret2`/`rethi`, no SIMD intrinsics, and no struct- or vector-typed parameter or `var`
-  declaration in `src/`. The three structs (`pam_rule`, `pam_user`, `pam_session`,
-  `src/pam.cyr:255`/`:279`/`:320`) are accessor-style over heap offsets and are never passed or
-  assigned by value, so item 5's by-value-struct-param deep copy is a no-op here as well.
-- No top-level bare `{` blocks (item 4), no duplicated global declarations (item 6), no
-  `regression_*` call sites (item 8), and no own `vec_*` function colliding with the 14 names
-  `lib/vec.cyr` exports (item 9), so the new transitive `lib/assert.cyr` → `lib/vec.cyr`
-  include changes nothing.
-- 7 `file_exists` / `file_read_all` call sites — those gain read-only-volume support only on
-  PE, so no change on the targets aegis actually ships.
-
-After bumping, verify the audit-log append path directly: write two records, restart the
-daemon, write a third, and confirm all three are present in order. That is cheap and it is the
-one behaviour this repo cannot afford to get wrong.
-
-## Moved from cyrius's roadmap (2026-10-08) — for the next cyrius pin move
-
-cyrius no longer carries this repo's follow-ups; the items below were moved here from its roadmap. Each
-applies from the cyrius version it names. Everything else that changes between this repo's pin and cyrius
-6.7.6 is in cyrius's `CHANGELOG.md` and `docs/development/ecosystem-migration.md`.
-
-- **Same-arity duplicate fns** — cyrius's 6.6.3 ecosystem sweep (2026-09-12) recorded **1** same-arity
-  duplicate-fn warning(s) in this repo's build (not re-derived since). Since cyrius **6.6.20** every call binds
-  the LAST definition (before, a non-tail call to an already-defined fn bound the first), so a duplicate whose
-  body differs changes what runs at the pin bump. Remove the duplicates or confirm the last definition is the
-  intended one.
