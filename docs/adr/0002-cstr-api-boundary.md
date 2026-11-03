@@ -22,7 +22,7 @@ A consistent split:
 - **Record fields that store strings — `event.id`, `event.agent_id`, `q.reason`, `finding.category`, etc. — store `Str*`.** Length is constant-time, comparisons are length-prefixed.
 - **Conversion at the boundary**: `str_from(cstr)` to wrap when storing into a record; `str_data(str)` to extract a cstr from a stored Str (safe because `str_from` and `str_builder_build` both null-terminate their backing buffers).
 - **Hashmap convention**: cstr-keyed maps (`map_new()`) for everything aegis owns — quarantine map keyed by agent_id cstr, event metadata map keyed by metadata-key cstr. Never `map_new_str()`.
-- **JSON helpers** (`_aegis_jv_set_*`, `_aegis_jv_get_*`) hide the asymmetry: setters wrap with `str_from`, getters pass cstr directly to `json_v_obj_get`. Documented in the helper comments.
+- **JSON helpers** (`_aegis_jv_set_*`, `_aegis_jv_get_*`) hide the asymmetry: setters wrap with `str_from`, getters pass cstr directly to `bayan_json_v_obj_get_by_cstr` (`json_v_obj_get` until aegis 1.2.0; bayan deprecated it at 1.5.10). Documented in the helper comments.
 
 ## Consequences
 

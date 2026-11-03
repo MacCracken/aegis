@@ -581,7 +581,7 @@ fn aegis_events_for_agent(d, agent_id_cstr) {
         var e = aegis_ring_get(events, i);
         var aid_str = event_agent_id(e);
         if (aid_str != 0) {
-            if (streq(str_data(aid_str), agent_id_cstr) == 1) {
+            if (str_eq_cstr(aid_str, agent_id_cstr) == 1) {
                 vec_push(out, e);
             }
         }
@@ -634,7 +634,7 @@ fn _aegis_resolve_event_inner(d, event_id_cstr) {
     var i = 0;
     while (i < n) {
         var e = aegis_ring_get(events, i);
-        if (streq(str_data(event_id(e)), event_id_cstr) == 1) {
+        if (str_eq_cstr(event_id(e), event_id_cstr) == 1) {
             event_set_resolved(e, 1);
             if (_aegis_log_want_debug() == 1) {
                 var sb = str_builder_new();
@@ -1668,21 +1668,21 @@ fn _aegis_jv_set_bool(obj, key_cstr, b) {
 # ---------- jv-tree reader helpers ------------------------------
 
 fn _aegis_jv_get_cstr(obj, key_cstr) {
-    var v = json_v_obj_get(obj, key_cstr);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
     if (json_v_is_str(v) == 0) { return 0; }
     return str_data(json_v_str(v));
 }
 
 fn _aegis_jv_get_str(obj, key_cstr) {
-    var v = json_v_obj_get(obj, key_cstr);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
     if (json_v_is_str(v) == 0) { return 0; }
     return json_v_str(v);
 }
 
 fn _aegis_jv_get_int(obj, key_cstr) {
-    var v = json_v_obj_get(obj, key_cstr);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
     return json_v_int(v);
 }
@@ -1691,14 +1691,14 @@ fn _aegis_jv_get_int(obj, key_cstr) {
 # whatever the record already holds — which lets the *_from_json_v readers
 # start from a defaults record and stay fail-closed on omitted switches.
 fn _aegis_jv_set_bool_into(obj, key_cstr, rec, off) {
-    var v = json_v_obj_get(obj, key_cstr);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
     store64(rec + off, json_v_bool(v));
     return 1;
 }
 
 fn _aegis_jv_get_bool(obj, key_cstr) {
-    var v = json_v_obj_get(obj, key_cstr);
+    var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
     return json_v_bool(v);
 }
@@ -1837,7 +1837,7 @@ fn scan_result_from_json_v(v) {
     store64(r + 8,  target);
     store64(r + 16, st);
     var findings_vec = vec_new();
-    var fv = json_v_obj_get(v, "findings");
+    var fv = bayan_json_v_obj_get_by_cstr(v, "findings");
     if (fv != 0) {
         if (json_v_is_arr(fv) == 1) {
             var n = json_v_arr_len(fv);
@@ -1895,13 +1895,13 @@ fn aegis_config_from_json_v(v) {
     _aegis_jv_set_bool_into(v, "scan_on_execute", c, 8);
     # 0.9.3 P(-1): clamp ints from the wire — F-1 (max_events DoS),
     # F-4 (auto_release_timeout sentinel collision), F-5 (interval bounds).
-    var iv = json_v_obj_get(v, "periodic_scan_interval_secs");
+    var iv = bayan_json_v_obj_get_by_cstr(v, "periodic_scan_interval_secs");
     if (iv != 0) { store64(c + 16, _aegis_clamp_interval_secs(json_v_int(iv))); }
     _aegis_jv_set_bool_into(v, "quarantine_on_critical", c, 24);
     _aegis_jv_set_bool_into(v, "quarantine_on_high", c, 32);
-    var mev = json_v_obj_get(v, "max_events");
+    var mev = bayan_json_v_obj_get_by_cstr(v, "max_events");
     if (mev != 0) { store64(c + 40, _aegis_clamp_max_events(json_v_int(mev))); }
-    var arv = json_v_obj_get(v, "auto_release_timeout_secs");
+    var arv = bayan_json_v_obj_get_by_cstr(v, "auto_release_timeout_secs");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
         if (json_v_is_int(arv) == 1) { ar = _aegis_clamp_auto_release_timeout(json_v_int(arv)); }
@@ -1952,7 +1952,7 @@ fn dbpolicy_from_json_v(v) {
     store64(p + 24, _aegis_clamp_max_conns(_aegis_jv_get_int(v,  "max_connections_per_agent")));
     store64(p + 32, _aegis_jv_get_bool(v, "check_socket_permissions"));
     var kt = vec_new();
-    var ktv = json_v_obj_get(v, "kernel_tuning");
+    var ktv = bayan_json_v_obj_get_by_cstr(v, "kernel_tuning");
     if (ktv != 0) {
         if (json_v_is_arr(ktv) == 1) {
             var n = json_v_arr_len(ktv);
@@ -2006,7 +2006,7 @@ fn aegis_stats_from_json_v(v) {
         store64(s + 32 + i * 8, 0);
         i = i + 1;
     }
-    var tc = json_v_obj_get(v, "threat_counts");
+    var tc = bayan_json_v_obj_get_by_cstr(v, "threat_counts");
     if (tc != 0) {
         if (json_v_is_obj(tc) == 1) {
             store64(s + 32 + THREAT_CRITICAL * 8, _aegis_jv_get_int(tc, "Critical"));
@@ -2078,7 +2078,7 @@ fn quarantine_entry_from_json_v(v) {
     }
     store64(entry + 24, tl);
     var events_vec = vec_new();
-    var ev = json_v_obj_get(v, "events");
+    var ev = bayan_json_v_obj_get_by_cstr(v, "events");
     if (ev != 0) {
         if (json_v_is_arr(ev) == 1) {
             var n = json_v_arr_len(ev);
@@ -2095,7 +2095,7 @@ fn quarantine_entry_from_json_v(v) {
         }
     }
     store64(entry + 32, events_vec);
-    var arv = json_v_obj_get(v, "auto_release_at");
+    var arv = bayan_json_v_obj_get_by_cstr(v, "auto_release_at");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
         # json_v_str returns a Str*; iso8601_parse needs the cstr behind it.
@@ -2171,7 +2171,7 @@ fn security_event_from_json_v(v) {
     var src = _aegis_jv_get_str(v, "source");
     if (src == 0) { src = str_from(""); }
     store64(e + 24, src);
-    var aid_v = json_v_obj_get(v, "agent_id");
+    var aid_v = bayan_json_v_obj_get_by_cstr(v, "agent_id");
     var aid = 0;
     if (aid_v != 0) {
         if (json_v_is_str(aid_v) == 1) {
@@ -2194,7 +2194,7 @@ fn security_event_from_json_v(v) {
     if (desc == 0) { desc = str_from(""); }
     store64(e + 48, desc);
     var meta = 0;
-    var meta_v = json_v_obj_get(v, "metadata");
+    var meta_v = bayan_json_v_obj_get_by_cstr(v, "metadata");
     if (meta_v != 0) {
         if (json_v_is_obj(meta_v) == 1) {
             var n = json_v_obj_len(meta_v);

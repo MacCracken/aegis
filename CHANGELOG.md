@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-03
+
+Toolchain and dependency refresh to cyrius 6.7.x, plus the two build-warning
+classes 1.1.9 left open. The 217-fn public surface, every wire format and the
+firewall ruleset shape are unchanged.
+
+### Changed
+
+- **Toolchain `6.6.20` → `6.7.9`.**
+- **agnostik `1.7.1` → `1.12.0`**, the latest agnostik tag pinned to 6.7.9. The
+  three fns aegis calls — `agent_id_new`, `stik_err_invalid_argument`,
+  `stik_err_io` — are unchanged.
+- **nein `1.7.1` → `1.8.0`**, the only nein tag pinned to 6.7.9; no API change.
+  nein's own pins move with it: libro `2.10.8` → `2.11.0`, majra `2.9.3` →
+  `2.12.0`, bote-core `3.3.17` → `3.4.10`, sigil `3.13.10` → `3.13.11`, patra
+  `1.15.2` → `1.16.0`. None is reachable from aegis; all are DCE-dropped.
+- **`cyrius.lock` regenerated from the tags.** 7 commit pins, 62 files;
+  `cyrius deps --verify` 62 / 0 and `cyrius deps --locked` clean.
+- **15 × deprecated `json_v_obj_get` → `bayan_json_v_obj_get_by_cstr`**
+  (`src/lib.cyr`: the five `_aegis_jv_*` readers and ten direct calls in the
+  `*_from_json_v` parsers). The deprecated name was a one-line wrapper over
+  the new one, so lookups behave exactly as before.
+- **4 × `streq(str_data(s), c)` → `str_eq_cstr(s, c)`** —
+  `aegis_events_for_agent` and `_aegis_resolve_event_inner` in `src/lib.cyr`,
+  and two test helpers in `tests/aegis.tcyr`. The comparison is now by
+  length and no longer depends on a `Str`'s bytes happening to be
+  NUL-terminated.
+- ADR 0002 names `bayan_json_v_obj_get_by_cstr` as the getter.
+
+### Toolchain notes (6.7.0 – 6.7.9)
+
+- **A `path` override is now used only in local mode** (6.7.6). A default
+  `cyrius deps` / build resolves the tag and prints one hint line naming the
+  sibling checkouts it skipped; `CYRIUS_LOCAL=1` builds the siblings. The
+  1.1.9 caveat — local siblings ahead of the tags shadowing them — no longer
+  applies.
+- Checked against aegis source and found empty: no bare `!` (a real operator
+  from 6.7.3; the lexer used to drop it), no name spelled `trait`, `const`,
+  `do`, `dyn`, `true` or `false` (reserved across 6.7.0 – 6.7.8), and no
+  unary `-` / `~` on a constant followed by a literal operator (precedence
+  changed at 6.7.9).
+
+### Verified
+
+- `./scripts/audit.sh` green on every gate: syntax, fmt, lint, vet,
+  api-surface (matches the 217-fn snapshot), DCE build, ELF, smoke, tests
+  **428 / 428**, fuzz, bench, security scan, docs.
+- **Zero warnings from aegis source** in the daemon, test, bench, fuzz and
+  example builds (before this change: 17 from `src/lib.cyr`, 2 more from
+  `tests/aegis.tcyr`).
+  The two that remain come from the toolchain and dependencies:
+  `refusing to overwrite stdlib leaf 'sigil'` (the 6.7.9 stdlib snapshot folds
+  sigil 3.13.11, the same version nein pins) and `large static data`, which is
+  vendored — `src/` declares no buffer of 1 KB or more.
+- Closeout pass for the minor: doc-health has no stale rows, all six ADRs are
+  Accepted, `001-cyrius-port-gaps` has no deferred rows, and
+  `docs/examples/basic_consumer.cyr` builds and runs.
+
 ## [1.1.9] - 2026-11-03
 
 Toolchain and dependency refresh. No aegis source change: the 217-fn public

@@ -20,3 +20,6 @@ date,version,bench,avg_ns,min_ns,max_ns,iterations,notes
 2026-11-03,1.1.9,aegis_next_id,833,789,883,100000,cyrius 6.6.20 pin; timer-floor-subtracted (1.347us); single run on a shared host
 2026-11-03,1.1.9,security_event_new,2401,2237,2538,100000,cyrius 6.6.20 pin; timer-floor-subtracted
 2026-11-03,1.1.9,aegis_report_event,3302,3197,3515,50000,cyrius 6.6.20 pin; timer-floor-subtracted
+2026-11-03,1.2.0,aegis_next_id,844,824,895,100000,cyrius 6.7.9 pin; timer-floor-subtracted; single run on a shared host
+2026-11-03,1.2.0,security_event_new,2412,2271,2589,100000,cyrius 6.7.9 pin; timer-floor-subtracted
+2026-11-03,1.2.0,aegis_report_event,3360,3289,3586,50000,cyrius 6.7.9 pin; timer-floor-subtracted

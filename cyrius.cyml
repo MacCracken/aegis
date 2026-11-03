@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "aegis — security daemon for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 entry = "src/main.cyr"
@@ -14,9 +14,8 @@ output = "aegis"
 # and what aegis calls from it: docs/development/state.md, Dependencies.
 # What changed between versions: CHANGELOG.md.
 #
-# `path` is a local dev override. When the sibling checkout exists it
-# shadows `tag` outright; CI has no siblings and resolves `tag` from git.
-# Both must stay correct.
+# `path` is a local dev override, used only in local mode (CYRIUS_LOCAL=1).
+# A default build resolves `tag` from git, as CI does. Both must stay correct.
 [deps]
 # Modules aegis source includes directly — every `include "lib/X.cyr"` in
 # src/ must have its X listed here. Transitive requirements are not declared
@@ -29,7 +28,7 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "ass
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
-tag = "1.7.1"
+tag = "1.12.0"
 modules = ["src/types.cyr", "src/error.cyr"]
 
 # nftables ruleset generation for the QA_ISOLATE / QA_RATELIMIT quarantine
@@ -42,5 +41,5 @@ modules = ["src/types.cyr", "src/error.cyr"]
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
 path = "../nein"
-tag = "1.7.1"
+tag = "1.8.0"
 modules = ["dist/nein.cyr"]

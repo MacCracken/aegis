@@ -8,7 +8,7 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**1.1.9** — current, on cyrius 6.6.20. The public API surface is SemVer-stable:
+**1.2.0** — current, on cyrius 6.7.9. The public API surface is SemVer-stable:
 additions are non-breaking, removals or renames need a major bump. 1.1.x has been
 the PAM fold (from the agnosys → agnodrm decomposition), toolchain and dependency
 refreshes, an append-only NDJSON event sink (1.1.7), and — at 1.1.6 — a P(-1)

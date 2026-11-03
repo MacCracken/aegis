@@ -45,22 +45,6 @@ lands, or when a P(-1) follow-up cycle batches them.
   comment. Single grep target. Land the constant in cyrius stdlib, then
   swap the local for the global.
 
-### Build warnings surfaced at the 6.6.20 pin (1.1.9)
-
-Neither is gated by `audit.sh`; both are aegis source, so both are aegis's
-to fix. Each is a separate change.
-
-- **15 × deprecated `json_v_obj_get`** in `src/lib.cyr` — the five
-  `_aegis_jv_get_*` / `_aegis_jv_set_bool_into` readers and ten direct
-  calls in the `*_from_json_v` parsers. Swap to
-  `bayan_json_v_obj_get_by_cstr`; every key is a literal.
-- **2 × a `Str` data pointer passed to `streq`** —
-  `aegis_events_for_agent` (`src/lib.cyr:584`) and
-  `_aegis_resolve_event_inner` (`:637`). Not a live bug: `str_from` and
-  bayan's parsed strings are both NUL-terminated at their length (probed at
-  1.1.9). Swap to `str_eq_cstr(s, cstr)`, which compares by length and does
-  not lean on that.
-
 ### Observability
 
 - **Trace-ID propagation** (`sakshi_trace_set` for cross-process
