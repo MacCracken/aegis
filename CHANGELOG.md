@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-03
+
+Toolchain and dependency refresh to cyrius 6.7.18, every dependency at its
+latest release, and a fix the stricter nein exposed: the hardened-host ruleset
+aegis has shipped since 0.9.0 could never be applied. The 217-fn public surface
+and everything aegis writes are unchanged; its JSON readers now refuse two
+malformed inputs they used to accept (below).
+
+### Fixed
+
+- **`aegis_hardened_host()`'s ping rule rendered as
+  `meta l4proto unknown icmp type echo-request accept`, which nft refuses**
+  (`Could not resolve protocol name`). nft commits a batch whole or not at
+  all, so the entire baseline ruleset failed to apply. `src/firewall.cyr`
+  passed the string `"icmp"` to `match_protocol`, which takes a `PROTO_*`
+  value — nein's own `cstring` annotation on that parameter hides the mismatch
+  from the compiler. Every nein release renders any value outside `PROTO_*` as
+  `unknown`; nein 1.8.2's range check is the first thing to refuse it, which
+  is how aegis's `hardened-host firewall validates` test caught it at this
+  bump. Now `match_protocol(PROTO_ICMP)`, rendering
+  `meta l4proto icmp icmp type echo-request accept comment "ping"`.
+  `aegis_isolate_agent` and `aegis_rate_limit_agent` never used a protocol
+  match and were unaffected.
+
+### Changed
+
+- **Toolchain `6.7.9` → `6.7.18`.**
+- **The `*_from_json` readers refuse duplicate object keys and leading-zero
+  numbers.** The 6.7.18 stdlib's bayan (1.11.1) rejects both, at any depth, so
+  each of the eight `*_from_json` entry points now returns 0 for, e.g.,
+  `{"id":"a","id":"b",…}`, a duplicate key inside `metadata`, or
+  `{"max_events":010}`. Before, a duplicate key was accepted and the first
+  occurrence won. aegis's own output never repeats a key and still round-trips.
+  A peer (daimon, argonaut) that emits either form will now see its record
+  refused rather than silently read.
+- **agnostik `1.12.0` → `2.0.0`**, the latest release. 2.0.0 renames 706 field
+  accessors; aegis uses none of them (checked against agnostik's
+  `docs/migration/2.0.0-renames.tsv`), and the three fns it calls —
+  `agent_id_new`, `stik_err_invalid_argument`, `stik_err_io` — keep their
+  names and arity. No aegis change.
+- **nein `1.8.0` → `1.9.0`**, the latest release. 1.9.0's breaking changes
+  (the MCP host gate, the GeoIP default hook, `NEIN_ERR_OUTCOME_UNKNOWN` on
+  apply) are all outside the builder / render / validate surface aegis uses.
+  1.8.2 changed rendered rulesets and made validation stricter; the only
+  aegis output it touched is the ping rule above (`iif "lo"` also renders as
+  `iifname "lo"` now).
+- **Transitives follow nein 1.9.0's pins**, which are each package's latest
+  release: bote-core `3.4.10` → `3.8.0`, libro `2.11.0` → `2.11.3`, majra
+  `2.12.0` → `2.13.0`, sigil `3.13.11` → `3.13.15`, patra `1.16.0` → `1.16.6`.
+  aegis declares none of them, so bote-core resolves exactly at nein's pin.
+  None is reachable from aegis; all are DCE-dropped.
+- **`cyrius.lock` regenerated from the tags.** 7 commit pins, 70 files;
+  `cyrius deps --verify` 70 / 0 and `cyrius deps --locked` clean.
+- **The DCE build of the daemon is 668 KB** (2.37 MB on 6.7.9): 6.7.18
+  compacts the 2.1 MB of unreachable code that 6.7.9 only NOP-filled.
+
+### Verified
+
+- `./scripts/audit.sh` green on every gate: syntax, fmt, lint, vet,
+  api-surface (matches the 217-fn snapshot), DCE build, ELF, smoke, tests
+  **428 / 428**, fuzz, bench, security scan, docs.
+- **The JSON change, probed directly**: a duplicate top-level key, a
+  duplicate key inside `metadata` and `010` as an integer are each refused;
+  the same records without them, and `security_event_to_json`'s own output,
+  parse.
+- **The test suite as a `CYRIUS_DCE=1` binary**, the way CI runs it (6.7.18
+  now compacts dead code rather than NOP-filling it): 428 / 428.
+- **All three firewall builders' rendered rulesets pass a real `nft -c`**
+  (nftables 1.1.7, in an unprivileged user + network namespace): hardened
+  host, isolate, rate limit. Before the fix the hardened host failed it.
+- **Zero build warnings** in the daemon, test, bench, fuzz and example builds,
+  including the two dependency-level ones 1.2.0 carried (the `sigil`
+  stdlib-leaf collision and the large-static-data note).
+
 ## [1.2.0] - 2026-11-03
 
 Toolchain and dependency refresh to cyrius 6.7.x, plus the two build-warning

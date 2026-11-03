@@ -140,7 +140,7 @@ fn aegis_hardened_host() {
     rule_set_comment(ssh, "SSH");
     chain_add_rule(input, ssh);
     var ping = rule_new(verdict_accept());
-    rule_add_match(ping, match_protocol("icmp"));
+    rule_add_match(ping, match_protocol(PROTO_ICMP));
     rule_add_match(ping, match_icmp_type("echo-request"));
     rule_set_comment(ping, "ping");
     chain_add_rule(input, ping);

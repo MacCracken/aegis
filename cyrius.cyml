@@ -4,7 +4,7 @@ version = "${file:VERSION}"
 description = "aegis — security daemon for AGNOS"
 license = "GPL-3.0-only"
 language = "cyrius"
-cyrius = "6.7.9"
+cyrius = "6.7.18"
 
 [build]
 entry = "src/main.cyr"
@@ -28,7 +28,7 @@ stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "ass
 [deps.agnostik]
 git = "https://github.com/MacCracken/agnostik.git"
 path = "../agnostik"
-tag = "1.12.0"
+tag = "2.0.0"
 modules = ["src/types.cyr", "src/error.cyr"]
 
 # nftables ruleset generation for the QA_ISOLATE / QA_RATELIMIT quarantine
@@ -41,5 +41,5 @@ modules = ["src/types.cyr", "src/error.cyr"]
 [deps.nein]
 git = "https://github.com/MacCracken/nein.git"
 path = "../nein"
-tag = "1.8.0"
+tag = "1.9.0"
 modules = ["dist/nein.cyr"]
