@@ -7,6 +7,18 @@
 
 ## Version
 
+**1.2.2** — third P(-1) hardening pass (2026-11-04), paired with the 1.2.x
+minor, plus nein `1.9.0` → `1.9.1` (bote-core `3.8.0` → `3.8.9` at nein's pin).
+**21 findings (F-28..F-48): 20 fixed, F-47 deferred to 1.3.x** — see
+[`../audit/2026-11-04-audit.md`](../audit/2026-11-04-audit.md). Two HIGH: the
+aarch64 build followed symlinks (x86_64 `O_NOFOLLOW` literal), and IPv6 agents
+could never be isolated. The firewall builders and `aegis_firewall_render` now
+refuse what nft would not parse as one host; the hardened host answers IPv6
+neighbour discovery; the event sink refuses symlinks, FIFOs and foreign files;
+the PAM parser assembles lines as Linux-PAM does. CI now runs the suite under
+qemu-aarch64. 217-fn surface unchanged; 533 tests pass on both arches. See
+CHANGELOG `[1.2.2]`.
+
 **1.2.1** — toolchain + dependency refresh (2026-11-03): cyrius pin `6.7.9` →
 `6.7.18`; agnostik `1.12.0` → `2.0.0` and nein `1.8.0` → `1.9.0`, each the
 latest release, with nein's transitives (bote-core `3.8.0` among them) at
@@ -103,10 +115,11 @@ changed to in-place-plus-`--check` in 6.5.x, so the fmt gate in `audit.sh` and
     rather than overwrite. aegis ships no PE target; the event sink's
     restart-append path was re-verified at 1.1.9 anyway.
 - **Build warnings on 6.7.18**: none — the daemon, test, bench, fuzz and
-  example builds are all clean. The two dependency-level warnings 1.2.0
-  carried (the `sigil` stdlib-leaf collision, the large-static-data note) are
-  gone with nein 1.9.0's pins.
-- **CI**: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — toolchain install, `cyrius deps`, syntax check (`--with-deps`), fmt (`--check`), lint, vet, **api-surface drift gate** (0.9.2+), DCE build, ELF check, aarch64 cross-build (best-effort), smoke, full test suite, fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
+  example builds are all clean, and the daemon builds clean for `--aarch64`
+  and `--agnos` too. The two dependency-level warnings 1.2.0 carried (the
+  `sigil` stdlib-leaf collision, the large-static-data note) are gone with
+  nein 1.9.0's pins.
+- **CI**: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — toolchain install, `cyrius deps`, syntax check (`--with-deps`), fmt (`--check`), lint, vet, **api-surface drift gate** (0.9.2+), DCE build, ELF check, aarch64 cross-build (best-effort), smoke, full test suite, the test suite again on aarch64 under qemu-user (1.2.2+), fuzz, benchmarks, security pattern scan, doc + version-consistency gates.
 - **Release**: [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — runs CI, verifies tag matches `VERSION`, builds x86_64 + aarch64 (best-effort), packages source tarball + `aegis-<ver>-lib.cyr` + binaries + `SHA256SUMS`. `0.x` tags ship as prerelease.
 - **Local one-shot**: [`scripts/audit.sh`](../../scripts/audit.sh) — every CI gate locally.
 
@@ -115,7 +128,14 @@ changed to in-place-plus-`--check` in 6.5.x, so the fmt gate in `audit.sh` and
 - `src/lib.cyr` — core library: 4 enums, 9 records, 22 daemon API methods, JSON serde for all 8 records, sakshi-full logging on 10 mutating entry points (debug construction gated behind `_aegis_log_want_debug` since 1.1.6), fixed-cap ring buffer for the events log, agnostik-backed v4 UUID event IDs.
 - `src/firewall.cyr` — nein integration. Three public builders (`aegis_isolate_agent`, `aegis_rate_limit_agent`, `aegis_hardened_host`) + `aegis_firewall_render` / `aegis_firewall_validate` wrappers. Standalone surface — not coupled to `QuarantineEntry`; consumers (daimon) decide when to call the builder based on the `QuarantineAction` they read from the entry.
 - `src/pam.cyr` — PAM surface, folded in from agnosys during the agnosys → agnodrm decomposition (1.1.0). 63 public fns. Parses `/etc/passwd`, `/etc/pam.d/*` and `who` output; audited for the first time at 1.1.6, which added allowlist validation on module / arg / service-name, `O_NOFOLLOW` on every open, fail-closed rendering, and support for the `-` type prefix and bracketed control form that real PAM configs use.
-- `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, prints `"aegis ready"`. Includes `lib.cyr`, `firewall.cyr`, and `pam.cyr`.
+- `src/main.cyr` — thin daemon entry: `alloc_init`, sakshi level config, opens the NDJSON sink when `AEGIS_EVENT_LOG` is set, prints `"aegis ready"` and exits — there is no run loop yet (roadmap 1.3.x). Includes `lib.cyr`, `firewall.cyr`, and `pam.cyr`.
+
+The 1.2.2 audit pass changed how each seam treats hostile input:
+- Opens use the stdlib's per-arch `O_NOFOLLOW`.
+- Scan paths are checked with lstat, and non-regular files are findings.
+- The firewall builders accept only what nft parses as one host.
+- The sink refuses symlinks, FIFOs and files it does not own alone.
+- PAM lines are assembled the way Linux-PAM's `pam_line.c` assembles them.
 
 **Allocator note for consumers**: aegis never calls `free`, and the default bump
 allocator's `free` is a no-op. Steady-state memory tracks *total events reported*,
@@ -126,9 +146,9 @@ bounds CPU and live-set size, not process RSS.
 
 | Harness | Status |
 |---------|--------|
-| `tests/aegis.tcyr` | **428 passed / 0 failed** across 105 test groups on 6.7.18 (414/104 at 1.1.6; the 1.1.7 event-sink group added the rest). 12 groups added at 1.1.6 covering every F-10..F-27 regression; `src/pam.cyr` entered the test TU at 1.1.6 with 7 dedicated groups after having zero assertions. |
+| `tests/aegis.tcyr` | **533 passed / 0 failed** across 118 test groups on 6.7.18, on x86_64 and under qemu-aarch64 (428/105 at 1.2.1). The 13 groups added at 1.2.2 cover F-28..F-46, and each was confirmed to fail against the 1.2.1 sources. 12 groups added at 1.1.6 cover F-10..F-27; `src/pam.cyr` entered the test TU at 1.1.6 with 7 dedicated groups after having zero assertions. |
 | `tests/aegis.fcyr` | Real fuzz: 1000 random-byte iterations + ~30 curated edge-case JSON inputs through all 8 record-from-json parsers. Runs in ~1 s. |
-| `tests/aegis.bcyr` | 3 benches on 6.7.18: `aegis_next_id` 856 ns, `security_event_new` 2.426 µs, `aegis_report_event` 3.374 µs (avg, 50–100k iter) — within 2% of the 1.2.0 rows on 6.7.9, single run on a shared host. 6.5.x's harness subtracts a measured timer floor, so these are not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
+| `tests/aegis.bcyr` | 3 benches on 6.7.18: `aegis_next_id` 851 ns, `security_event_new` 2.422 µs, `aegis_report_event` 2.499 µs (avg, 50–100k iter). `aegis_report_event` is −26% against the 1.2.2 P(-1) baseline row (3.381 µs): F-37 stopped building log lines below the bench's `SK_ERROR` level. The other two are within 1%. Single run on a shared host. 6.5.x's harness subtracts a measured timer floor, so these are not comparable to pre-1.1.5 rows. History in [`bench-history.csv`](../../bench-history.csv). |
 
 ## Dependencies
 
@@ -155,19 +175,20 @@ Direct (declared in `cyrius.cyml`):
   `getrandom`); `src/error.cyr` for `stik_err_invalid_argument` /
   `stik_err_io`, the two constructors aegis's PAM path invokes. `lib/agnostik_*.cyr`
   is resolved by `cyrius deps` — not committed.
-- **nein (v1.9.0)** — `dist/nein.cyr` single-file bundle (`firewall_*` /
+- **nein (v1.9.1)** — `dist/nein.cyr` single-file bundle (`firewall_*` /
   `table_*` / `chain_*` / `rule_*` / `match_*` / `verdict_*` API + constants).
   Used by `src/firewall.cyr` to build nftables rulesets for `QA_ISOLATE` /
   `QA_RATELIMIT` quarantine actions and the hardened-host baseline.
 
 Transitive (resolved from nein's manifest, **not declared by aegis**):
 
-nein 1.9.0 pins its own audit-chain and MCP deps — libro `2.11.3`, majra
-`2.13.0`, bote-core `3.8.0`, sigil `3.13.15`, patra `1.16.6`, each its
-package's latest release at 1.2.1 — and `cyrius deps` walks that graph. None is
-referenced by aegis source; all are DCE-stripped. Bumping them is nein's call:
-aegis deliberately declares none of them, so bote-core (and the rest) resolve
-exactly at nein's pin.
+nein 1.9.1 pins its own audit-chain and MCP deps — libro `2.11.3`, majra
+`2.13.0`, bote-core `3.8.9`, sigil `3.13.15`, patra `1.16.6` — and
+`cyrius deps` walks that graph. At 1.2.2 each is its package's latest release
+except bote-core, where bote has tagged `3.8.11`. None is referenced by aegis
+source; all are DCE-stripped. Bumping them is nein's call: aegis deliberately
+declares none of them, so bote-core (and the rest) resolve exactly at nein's
+pin.
 `cyrius.lock` commit-pins all seven. aegis declared libro and bote directly at 1.1.4 as a
 workaround for a source-graph walk that `cyrius deps` had not done since
 v5.7.14 anyway; the declarations' only real effect was to pin aegis's own libro
@@ -177,7 +198,10 @@ duplicate-symbol warnings.
 
 ## Consumers
 
-_None yet_ — daimon and argonaut are the planned downstream consumers; pull `src/lib.cyr` via `[deps.aegis]` once they're ready.
+- **chakshu** (0.8.0+) reads the NDJSON event stream (`AEGIS_EVENT_LOG`,
+  since 1.1.7) with `shu --watch`. It consumes the file, not the library.
+- **No consumer links `src/lib.cyr` yet.** daimon and argonaut are the planned
+  ones; they pull it via `[deps.aegis]` once they're ready.
 
 ## API surface
 
@@ -197,10 +221,10 @@ intentional additions regenerate with `--update` and commit in the same PR.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). The v1.0 freeze shipped 2026-05-10; the 1.1.x
-line has been toolchain/dependency refreshes plus the PAM fold from the
-agnosys → agnodrm decomposition. The outstanding v1.x deliverable is **one
-real downstream consumer green** — daimon or argonaut consuming `src/lib.cyr`
-end-to-end; [`docs/examples/basic_consumer.cyr`](../examples/basic_consumer.cyr)
-is the stand-in until then. Regenerating the API snapshot is gated on that
-consumer existing.
+See [`roadmap.md`](roadmap.md), organised by release line:
+- **1.3.x** — a daemon run loop (`src/main.cyr` reports nothing of its own yet), and
+  the PAM grammar coverage deferred as F-47.
+- **1.4.x** — making the `--agnos` build work at runtime, not just compile.
+- **1.x** — work that waits on a consumer: a real downstream consumer linking
+  `src/lib.cyr` (daimon or argonaut; `docs/examples/basic_consumer.cyr` is the
+  stand-in), the F-6 fd hand-off, and trace-ID propagation.

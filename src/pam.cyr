@@ -51,9 +51,44 @@ fn pam_read_fd_to_str(fd, cap): i64 {
     return str_new(buf, total);
 }
 
-# O_NOFOLLOW is not exported by the cyrius stdlib yet; src/lib.cyr carries
-# the same local constant for the F-6 scanner fix. Drop both when it lands.
-var _PAM_O_NOFOLLOW = 131072;
+# Read the whole file behind `fd`, or refuse (return 0). pam_read_fd_to_str
+# stops at `cap` and at the first read error and returns what it has; for a
+# security file that is a weaker policy than the one on disk (F-42: an 8 KB
+# comment pushed a `required pam_deny.so` line past the old cap and the file
+# parsed Ok without it). Refused: a file over `cap`, one that grew past its
+# fstat size while being read, and any read error other than EINTR. The
+# buffer is sized from fstat, so a large cap costs nothing for small files.
+fn _pam_read_whole(fd, cap): i64 {
+    var sb[144];
+    if (sys_fstat(fd, &sb) < 0) { return 0; }
+    var size = load64(&sb + STAT_SIZE);
+    if (size < 0) { return 0; }
+    if (size > cap) { return 0; }
+    var buf = alloc(size + 2);
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        var n = sys_read(fd, buf + total, size + 1 - total);
+        if (n == 0 - EINTR) {
+            rgo = 1;
+        } elif (n < 0) {
+            return 0;
+        } elif (n == 0) {
+            rgo = 0;
+        } else {
+            total = total + n;
+            if (total > size) { return 0; }
+        }
+    }
+    store8(buf + total, 0);
+    return str_new(buf, total);
+}
+
+# Hard caps for _pam_read_whole. A service file was read at 8 KB and
+# /etc/passwd at 64 KB, silently truncated; refusing instead of truncating
+# would fail real hosts at those sizes (a 64 KB passwd is ~1000 users).
+var _PAM_SERVICE_MAX = 262144;
+var _PAM_PASSWD_MAX = 16777216;
 
 # Cap on `who` capture. The buffer is allocated at cap+1 so the NUL
 # terminator below always lands inside the allocation — run_capture can
@@ -132,6 +167,17 @@ fn _pam_valid_service_name(name_cstr): i64 {
 }
 
 # Every byte of `sv` is an ASCII digit.
+# A uid / gid as the kernel holds one: 1–10 decimal digits, at most
+# 4294967294 ((uid_t)-1 is the "no change" sentinel). Digits alone were not
+# enough (F-43): str_to_int wraps, so 18446744073709551616 parsed as uid 0 —
+# root — and 9223372036854775808 as INT64_MIN, both is_system=1.
+fn _pam_id_ok(sv): i64 {
+    if (_pam_all_digits(sv) == 0) { return 0; }
+    if (str_len(sv) > 10) { return 0; }
+    if (str_to_int(sv) > 4294967294) { return 0; }
+    return 1;
+}
+
 fn _pam_all_digits(sv): i64 {
     var n = str_len(sv);
     if (n == 0) { return 0; }
@@ -230,13 +276,28 @@ fn pam_parse_control(s): i64 {
     if (str_eq_cstr(s, "sufficient") == 1) { return PAM_CTL_SUFFICIENT; }
     if (str_eq_cstr(s, "optional") == 1) { return PAM_CTL_OPTIONAL; }
     if (str_eq_cstr(s, "include") == 1) { return PAM_CTL_INCLUDE; }
-    if (str_len(s) > 1) {
-        var d = str_data(s);
-        if (load8(d) == 0x5B) {                          # '['
-            if (load8(d + str_len(s) - 1) == 0x5D) { return PAM_CTL_BRACKET; }
-        }
-    }
+    if (_pam_bracket_shape_ok(s) == 1) { return PAM_CTL_BRACKET; }
     return 0 - 1;
+}
+
+# `[...]` with no bracket inside. Linux-PAM ends the control at the first
+# ']', so `[success=ok] x` (or `[a]b]`) is control `[success=ok]` and module
+# `x` to it, while aegis held the whole text as the control and audited a
+# different module (F-46).
+fn _pam_bracket_shape_ok(s): i64 {
+    var n = str_len(s);
+    if (n < 2) { return 0; }
+    var d = str_data(s);
+    if (load8(d) != 0x5B) { return 0; }                  # '['
+    if (load8(d + n - 1) != 0x5D) { return 0; }          # ']'
+    var i = 1;
+    while (i < n - 1) {
+        var c = load8(d + i);
+        if (c == 0x5B) { return 0; }
+        if (c == 0x5D) { return 0; }
+        i = i + 1;
+    }
+    return 1;
 }
 
 # ================================================================
@@ -405,11 +466,11 @@ fn pam_parse_passwd_line(line): i64 {
     # non-numeric field — so "alice:x:root:root:..." used to parse as uid 0,
     # gid 0, is_system=1. The comment here always claimed this was checked;
     # now it is.
-    if (_pam_all_digits(uid_str) == 0) {
-        return stik_err_invalid_argument("non-numeric UID in passwd line");
+    if (_pam_id_ok(uid_str) == 0) {
+        return stik_err_invalid_argument("UID in passwd line is not a valid id");
     }
-    if (_pam_all_digits(gid_str) == 0) {
-        return stik_err_invalid_argument("non-numeric GID in passwd line");
+    if (_pam_id_ok(gid_str) == 0) {
+        return stik_err_invalid_argument("GID in passwd line is not a valid id");
     }
 
     # Heuristic: UIDs below 1000 are system users
@@ -539,26 +600,89 @@ fn pam_split_whitespace(s): i64 {
 # Parse PAM config file content
 # ================================================================
 
+# Join the file's physical lines into the logical lines Linux-PAM parses
+# (libpam_internal/pam_line.c, _pam_line_assemble):
+#   - '#' anywhere starts a comment that runs to the end of the line, and a
+#     line holding one never continues;
+#   - otherwise a line whose last non-blank byte is '\' continues onto the
+#     next, the backslash read as a space;
+#   - blank and comment-only lines are skipped.
+# Through 1.2.1 aegis split on '\n' and skipped only lines that START with
+# '#'. Linux-PAM read `auth optional pam_permit.so \` + `auth required
+# pam_unix.so` as ONE optional pam_permit rule, so no password was needed,
+# while aegis audited two rules including `required pam_unix.so` (F-44).
+# Returns a vec of trimmed Str lines, or 0 when the file ends inside a
+# continuation (Linux-PAM reports that as an error).
+fn _pam_assemble_lines(content): i64 {
+    var out = vec_new();
+    var phys = str_split(content, 10);  # 10 = '\n'
+    var np = vec_len(phys);
+    var sb = str_builder_new();
+    var open_cont = 0;
+    var idx = 0;
+    while (idx < np) {
+        var raw = vec_get(phys, idx);
+        var d = str_data(raw);
+        var n = str_len(raw);
+        # The empty piece after the final '\n' is not a line: getline never
+        # returns it, so it must not close a continuation.
+        if (idx == np - 1) {
+            if (n == 0) { break; }
+        }
+        var end = n;
+        var cont = 0;
+        var hash = memchr(d, 35, n);                    # '#'
+        if (hash >= 0) {
+            end = hash;
+        } else {
+            var p = n;
+            var scanning = 1;
+            while (scanning == 1) {
+                if (p == 0) {
+                    scanning = 0;
+                } else {
+                    var c = load8(d + p - 1);
+                    # ' ' and TAB only, as Linux-PAM: a CR before the newline
+                    # means the backslash is not last, so the line ends.
+                    if (c == 32 || c == 9) { p = p - 1; } else { scanning = 0; }
+                }
+            }
+            if (p > 0) {
+                if (load8(d + p - 1) == 92) {           # '\'
+                    cont = 1;
+                    end = p - 1;
+                }
+            }
+        }
+        str_builder_add(sb, str_new(d, end));
+        if (cont == 1) {
+            str_builder_add_cstr(sb, " ");
+            open_cont = 1;
+        } else {
+            var line = str_trim(str_builder_build(sb));
+            if (str_len(line) > 0) { vec_push(out, line); }
+            sb = str_builder_new();
+            open_cont = 0;
+        }
+        idx = idx + 1;
+    }
+    if (open_cont == 1) { return 0; }
+    return out;
+}
+
 # Parse PAM config text into a vec of PamRule pointers.
-# Each non-blank, non-comment line: type control module [args...]
+# Each logical line (see _pam_assemble_lines): type control module [args...]
 # Returns Result: Ok(vec_of_rules) or Err.
 fn pam_parse_config(content): i64 {
     var rules = vec_new();
-    var lines = str_split(content, 10);  # 10 = '\n'
+    var lines = _pam_assemble_lines(content);
+    if (lines == 0) {
+        return stik_err_invalid_argument("PAM config ends inside a line continuation");
+    }
     var idx = 0;
 
     while (idx < vec_len(lines)) {
-        var line = str_trim(vec_get(lines, idx));
-        if (str_len(line) == 0) {
-            idx = idx + 1;
-            continue;
-        }
-
-        # Skip comments (lines starting with #)
-        if (load8(str_data(line)) == 35) {  # '#'
-            idx = idx + 1;
-            continue;
-        }
+        var line = vec_get(lines, idx);
 
         var parts = pam_split_whitespace(line);
         var nparts = vec_len(parts);
@@ -682,13 +806,16 @@ fn pam_read_service_config(service_name): i64 {
 
     # O_NOFOLLOW mirrors the F-6 scanner fix: a symlink planted at
     # /etc/pam.d/<name> must not redirect the read.
-    var fd = sys_open(str_data(path), O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
+    var fd = sys_open(str_data(path), O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open PAM config file");
     }
     defer { sys_close(fd); }
 
-    var content = pam_read_fd_to_str(fd, 8192);
+    var content = _pam_read_whole(fd, _PAM_SERVICE_MAX);
+    if (content == 0) {
+        return stik_err_io("PAM config unreadable or larger than 256 KB");
+    }
 
     return pam_parse_config(content);
 }
@@ -700,13 +827,16 @@ fn pam_read_service_config(service_name): i64 {
 # Read /etc/passwd and return vec of UserInfo pointers.
 # Returns Result: Ok(vec) or Err.
 fn pam_list_users(): i64 {
-    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
+    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
-    var content = pam_read_fd_to_str(fd, 65536);
+    var content = _pam_read_whole(fd, _PAM_PASSWD_MAX);
+    if (content == 0) {
+        return stik_err_io("/etc/passwd unreadable or larger than 16 MB");
+    }
     var lines = str_split(content, 10);  # '\n'
     var users = vec_new();
 
@@ -820,6 +950,22 @@ fn pam_render_config(rules): i64 {
 # Check module path is reasonable and args have no shell metacharacters.
 # Returns Result: Ok(0) on valid, Err on invalid.
 fn pam_validate_rule(rule): i64 {
+    # Enum fields render through name lookups that answer "unknown" out of
+    # range, and Linux-PAM fails every login for a service whose stack has
+    # an illegal type line (F-45).
+    var rtype = pam_rule_type(rule);
+    if (rtype < PAM_TYPE_AUTH || rtype > PAM_TYPE_PASSWORD) {
+        return stik_err_invalid_argument("PAM rule type out of range");
+    }
+    var rctl = pam_rule_control(rule);
+    if (rctl < PAM_CTL_REQUIRED || rctl > PAM_CTL_BRACKET) {
+        return stik_err_invalid_argument("PAM control out of range");
+    }
+    var ropt = pam_rule_optional(rule);
+    if (ropt != 0 && ropt != 1) {
+        return stik_err_invalid_argument("PAM optional flag must be 0 or 1");
+    }
+
     var module = pam_rule_module(rule);
     if (str_len(module) == 0) {
         return stik_err_invalid_argument("PAM module path cannot be empty");
@@ -849,6 +995,9 @@ fn pam_validate_rule(rule): i64 {
         if (_pam_str_allowed(ctext, "[]= _-", 255) == 0) {
             return stik_err_invalid_argument("PAM control expression has a disallowed character");
         }
+        if (_pam_bracket_shape_ok(ctext) == 0) {
+            return stik_err_invalid_argument("PAM control expression must be one [...] group");
+        }
     }
 
     var args = pam_rule_args(rule);
@@ -874,13 +1023,16 @@ fn pam_get_user_info(username): i64 {
     var vtag, verr = pam_validate_username(username);
     if (is_err_result(vtag) == 1) { return Err(verr); }
 
-    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | _PAM_O_NOFOLLOW, 0);
+    var fd = sys_open("/etc/passwd", O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0);
     if (fd < 0) {
         return stik_err_io("failed to open /etc/passwd");
     }
     defer { sys_close(fd); }
 
-    var content = pam_read_fd_to_str(fd, 65536);
+    var content = _pam_read_whole(fd, _PAM_PASSWD_MAX);
+    if (content == 0) {
+        return stik_err_io("/etc/passwd unreadable or larger than 16 MB");
+    }
     var lines = str_split(content, 10);
     var name_str = str_from(username);
 

@@ -26,3 +26,9 @@ date,version,bench,avg_ns,min_ns,max_ns,iterations,notes
 2026-11-03,1.2.1,aegis_next_id,856,843,903,100000,cyrius 6.7.18 pin; timer-floor-subtracted; single run on a shared host
 2026-11-03,1.2.1,security_event_new,2426,2388,2711,100000,cyrius 6.7.18 pin; timer-floor-subtracted
 2026-11-03,1.2.1,aegis_report_event,3374,3316,3702,50000,cyrius 6.7.18 pin; timer-floor-subtracted
+2026-11-04,1.2.2,aegis_next_id,848,833,1011,100000,nein 1.9.1 / bote-core 3.8.9; P(-1) baseline; timer-floor-subtracted
+2026-11-04,1.2.2,security_event_new,2421,2281,2580,100000,nein 1.9.1 / bote-core 3.8.9; P(-1) baseline; timer-floor-subtracted
+2026-11-04,1.2.2,aegis_report_event,3381,3296,3600,50000,nein 1.9.1 / bote-core 3.8.9; P(-1) baseline; timer-floor-subtracted
+2026-11-04,1.2.2,aegis_next_id,851,841,895,100000,post-P(-1) fixes; timer-floor-subtracted
+2026-11-04,1.2.2,security_event_new,2422,2306,2636,100000,post-P(-1) fixes; timer-floor-subtracted
+2026-11-04,1.2.2,aegis_report_event,2499,2463,2640,50000,post-P(-1) fixes; F-37 skips log lines the bench's SK_ERROR level drops (3381 before); timer-floor-subtracted

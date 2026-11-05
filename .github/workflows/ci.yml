@@ -107,7 +107,10 @@ jobs:
           fail=0
           for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
             [ -f "$f" ] || continue
-            out=$(cyrius lint "$f" 2>&1)
+            # `|| true`, as in scripts/audit.sh: lint's syntax pre-pass can
+            # exit non-zero, and under the runner's `bash -e` a bare
+            # assignment would end the step before its output is shown.
+            out=$(cyrius lint "$f" 2>&1) || true
             echo "$out"
             if echo "$out" | grep -qE '^\s*warn '; then
               fail=1
@@ -165,6 +168,29 @@ jobs:
             rm -f "/tmp/ci_$name"
           done
 
+      - name: Tests (aarch64, qemu-user)
+        # The cross-build above proves only that aarch64 compiles. Running
+        # the suite there is what catches a per-arch constant: 1.2.1 shipped
+        # the x86_64 value of O_NOFOLLOW, so the aarch64 build followed
+        # symlinks while every x86_64 test passed
+        # (docs/audit/2026-11-04-audit.md F-28). Cyrius binaries are static,
+        # so qemu-user needs no sysroot.
+        run: |
+          if [ ! -x "$HOME/.cyrius/bin/cycc_aarch64" ]; then
+            echo "::warning::cycc_aarch64 not shipped with Cyrius — skipping aarch64 tests"
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user
+          for t in tests/*.tcyr; do
+            [ -f "$t" ] || continue
+            name=$(basename "$t" .tcyr)
+            echo "=== $name (aarch64) ==="
+            CYRIUS_DCE=1 cyrius build --aarch64 "$t" "/tmp/ci_${name}_aarch64"
+            qemu-aarch64 "/tmp/ci_${name}_aarch64"
+            rm -f "/tmp/ci_${name}_aarch64"
+          done
+
       - name: Fuzz
         run: |
           for f in tests/*.fcyr; do
@@ -214,9 +240,10 @@ jobs:
           # Writes to system paths
           scan "writes to /bin"  '"/bin/'
           scan "writes to /sbin" '"/sbin/'
-          # Unbounded fn-scope buffers — cyrius emits `var buf[N]`
-          # inside functions as static data; consecutive calls share
-          # the backing memory. Surface anything >= 4 KB; >= 64 KB fails.
+          # Large fn-scope buffers — `var buf[N]` inside a function is
+          # per-call stack storage up to the per-fn frame budget (~120 KB),
+          # then falls back to static storage shared by every call. Keep
+          # frames small: surface anything >= 4 KB; >= 64 KB fails.
           awk -F: '
             /var [A-Za-z_][A-Za-z0-9_]*\[[0-9]+\]/ {
               match($0, /\[[0-9]+\]/); s=substr($0,RSTART+1,RLENGTH-2); n=s+0;
@@ -244,7 +271,9 @@ jobs:
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
           echo "VERSION file: $VERSION"
-          grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in CHANGELOG.md"; exit 1; }
+          # The release heading, not the bare number: "1.2.1" also matches
+          # a dep version or a date-like string elsewhere in the file.
+          grep -qF "## [$VERSION]" CHANGELOG.md || { echo "FAIL: no ## [$VERSION] heading in CHANGELOG.md"; exit 1; }
           grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
             echo "FAIL: cyrius.cyml version must be \${file:VERSION}"; exit 1; }
           echo "Version consistent (manifest pulls VERSION via \${file:VERSION})"

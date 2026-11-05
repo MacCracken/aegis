@@ -20,6 +20,14 @@
 # src/lib.cyr — shared with the quarantine path's F-7 fix (0.9.4) so
 # both surfaces use the same whitelist. Include order is lib.cyr →
 # firewall.cyr; calls below resolve transparently.
+#
+# 1.2.2 (docs/audit/2026-11-04-audit.md F-38..F-41): the builders also
+# hold their input to what nein and nft accept, so a firewall they return
+# always passes aegis_firewall_validate. The whitelists above are
+# character sets; through 1.2.1 an IPv6 address, an agent id with '.',
+# a hex-only host name (`dead.beef`, which nft resolves through DNS at
+# apply time) or a /0 prefix each built a firewall that failed
+# validation or did something else than isolate one host.
 
 # ----------------------------------------------------------------
 # Helpers — build the per-agent table name "aegis_<prefix>_<id>"
@@ -33,6 +41,46 @@ fn _aegis_fw_table_name(prefix_cstr, agent_id_cstr) {
     str_builder_add_cstr(sb, "_");
     str_builder_add_cstr(sb, agent_id_cstr);
     return str_data(str_builder_build(sb));
+}
+
+# An agent address the firewall can match: the character whitelist, then
+# nein's parser (a literal IPv4 or IPv6 address, never a host name), then
+# a single host — no prefix, /32 or /128. A wider prefix isolates a whole
+# network, and /0 drops all traffic, SSH included.
+fn _aegis_fw_addr_ok(addr_cstr) {
+    if (_aegis_valid_agent_addr(addr_cstr) == 0)       { return 0; }
+    if (is_err_result(validate_addr(addr_cstr)) == 1)  { return 0; }
+    var n = strlen(addr_cstr);
+    var slash = memchr(addr_cstr, 47, n);
+    if (slash < 0) { return 1; }
+    var prefix = addr_cstr + slash + 1;
+    if (_aegis_fw_addr_is_v6(addr_cstr) == 1) { return streq(prefix, "128"); }
+    return streq(prefix, "32");
+}
+
+# After _aegis_fw_addr_ok, a ':' means IPv6: a dotted quad never has one.
+fn _aegis_fw_addr_is_v6(addr_cstr) {
+    if (memchr(addr_cstr, 58, strlen(addr_cstr)) >= 0) { return 1; }
+    return 0;
+}
+
+# nein renders `ip daddr` / `ip saddr` for the plain address matches, and
+# nft refuses an IPv6 address there (F-38).
+fn _aegis_fw_match_dest(addr_cstr) {
+    if (_aegis_fw_addr_is_v6(addr_cstr) == 1) { return match_dest_addr6(addr_cstr); }
+    return match_dest_addr(addr_cstr);
+}
+
+fn _aegis_fw_match_source(addr_cstr) {
+    if (_aegis_fw_addr_is_v6(addr_cstr) == 1) { return match_source_addr6(addr_cstr); }
+    return match_source_addr(addr_cstr);
+}
+
+# The composed table name must be an nft name. aegis's id whitelist
+# allows '.', which nein's (and so this) refuses (F-39).
+fn _aegis_fw_table_name_ok(table_name_cstr) {
+    if (is_err_result(validate_nft_name(table_name_cstr)) == 1) { return 0; }
+    return 1;
 }
 
 fn _aegis_fw_comment(prefix_cstr, agent_id_cstr) {
@@ -51,21 +99,22 @@ fn _aegis_fw_comment(prefix_cstr, agent_id_cstr) {
 # hardened_host or their own table on a different priority).
 # ----------------------------------------------------------------
 fn aegis_isolate_agent(agent_id_cstr, agent_addr_cstr) {
-    if (_aegis_valid_agent_id(agent_id_cstr) == 0)     { return 0; }
-    if (_aegis_valid_agent_addr(agent_addr_cstr) == 0) { return 0; }
-    var fw = firewall_new();
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
+    if (_aegis_fw_addr_ok(agent_addr_cstr) == 0)    { return 0; }
     var table_name = _aegis_fw_table_name("iso", agent_id_cstr);
+    if (_aegis_fw_table_name_ok(table_name) == 0)   { return 0; }
+    var fw = firewall_new();
     var t = table_new(table_name, FAMILY_INET);
 
     var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0 - 1, POLICY_ACCEPT);
     var input_drop = rule_new(verdict_drop());
-    rule_add_match(input_drop, match_dest_addr(agent_addr_cstr));
+    rule_add_match(input_drop, _aegis_fw_match_dest(agent_addr_cstr));
     rule_set_comment(input_drop, _aegis_fw_comment("isolate", agent_id_cstr));
     chain_add_rule(input, input_drop);
 
     var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0 - 1, POLICY_ACCEPT);
     var output_drop = rule_new(verdict_drop());
-    rule_add_match(output_drop, match_source_addr(agent_addr_cstr));
+    rule_add_match(output_drop, _aegis_fw_match_source(agent_addr_cstr));
     rule_set_comment(output_drop, _aegis_fw_comment("isolate", agent_id_cstr));
     chain_add_rule(output, output_drop);
 
@@ -83,11 +132,14 @@ fn aegis_isolate_agent(agent_id_cstr, agent_addr_cstr) {
 # anything over the limit is dropped.
 # ----------------------------------------------------------------
 fn aegis_rate_limit_agent(agent_id_cstr, agent_addr_cstr, pps) {
-    if (_aegis_valid_agent_id(agent_id_cstr) == 0)     { return 0; }
-    if (_aegis_valid_agent_addr(agent_addr_cstr) == 0) { return 0; }
-    if (pps <= 0)                                      { return 0; }
-    var fw = firewall_new();
+    if (_aegis_valid_agent_id(agent_id_cstr) == 0) { return 0; }
+    if (_aegis_fw_addr_ok(agent_addr_cstr) == 0)    { return 0; }
+    if (pps <= 0)                                   { return 0; }
+    # burst = 2*pps must fit nft's u32 (F-41); above 2^62 it went negative.
+    if (pps > 2147483647)                           { return 0; }
     var table_name = _aegis_fw_table_name("rl", agent_id_cstr);
+    if (_aegis_fw_table_name_ok(table_name) == 0)   { return 0; }
+    var fw = firewall_new();
     var t = table_new(table_name, FAMILY_INET);
     var burst = pps * 2;
     var accept_comment = _aegis_fw_comment("rate-limit", agent_id_cstr);
@@ -95,23 +147,23 @@ fn aegis_rate_limit_agent(agent_id_cstr, agent_addr_cstr, pps) {
 
     var input = chain_base("input", CHAIN_FILTER, HOOK_INPUT, 0 - 1, POLICY_ACCEPT);
     var input_accept = rule_new(verdict_accept());
-    rule_add_match(input_accept, match_dest_addr(agent_addr_cstr));
+    rule_add_match(input_accept, _aegis_fw_match_dest(agent_addr_cstr));
     rule_add_match(input_accept, match_limit(pps, RATE_SECOND, burst));
     rule_set_comment(input_accept, accept_comment);
     chain_add_rule(input, input_accept);
     var input_drop = rule_new(verdict_drop());
-    rule_add_match(input_drop, match_dest_addr(agent_addr_cstr));
+    rule_add_match(input_drop, _aegis_fw_match_dest(agent_addr_cstr));
     rule_set_comment(input_drop, drop_comment);
     chain_add_rule(input, input_drop);
 
     var output = chain_base("output", CHAIN_FILTER, HOOK_OUTPUT, 0 - 1, POLICY_ACCEPT);
     var output_accept = rule_new(verdict_accept());
-    rule_add_match(output_accept, match_source_addr(agent_addr_cstr));
+    rule_add_match(output_accept, _aegis_fw_match_source(agent_addr_cstr));
     rule_add_match(output_accept, match_limit(pps, RATE_SECOND, burst));
     rule_set_comment(output_accept, accept_comment);
     chain_add_rule(output, output_accept);
     var output_drop = rule_new(verdict_drop());
-    rule_add_match(output_drop, match_source_addr(agent_addr_cstr));
+    rule_add_match(output_drop, _aegis_fw_match_source(agent_addr_cstr));
     rule_set_comment(output_drop, drop_comment);
     chain_add_rule(output, output_drop);
 
@@ -123,9 +175,23 @@ fn aegis_rate_limit_agent(agent_id_cstr, agent_addr_cstr, pps) {
 
 # ----------------------------------------------------------------
 # hardened_host — baseline host posture. Drop inbound by default,
-# allow established/related + loopback + SSH + ICMP echo. Forward
-# defaults drop (we're not a router); output stays accept.
+# allow established/related + loopback + SSH + ICMP echo + IPv6
+# neighbour discovery. Forward defaults drop (we're not a router);
+# output stays accept.
+#
+# Neighbour discovery (F-40, 1.2.2): conntrack does not track ND, so
+# under policy drop the host stopped answering neighbour solicitations
+# and every IPv6 peer lost it — SSH over IPv6 included. Router adverts
+# keep SLAAC routes alive.
 # ----------------------------------------------------------------
+fn _aegis_fw_icmpv6_accept(type_cstr, comment_cstr) {
+    var r = rule_new(verdict_accept());
+    rule_add_match(r, match_protocol(PROTO_ICMPV6));
+    rule_add_match(r, match_icmpv6_type(type_cstr));
+    rule_set_comment(r, comment_cstr);
+    return r;
+}
+
 fn aegis_hardened_host() {
     var fw = firewall_new();
     var t = table_new("aegis_host", FAMILY_INET);
@@ -144,6 +210,9 @@ fn aegis_hardened_host() {
     rule_add_match(ping, match_icmp_type("echo-request"));
     rule_set_comment(ping, "ping");
     chain_add_rule(input, ping);
+    chain_add_rule(input, _aegis_fw_icmpv6_accept("nd-neighbor-solicit", "ipv6 neighbour solicit"));
+    chain_add_rule(input, _aegis_fw_icmpv6_accept("nd-neighbor-advert", "ipv6 neighbour advert"));
+    chain_add_rule(input, _aegis_fw_icmpv6_accept("nd-router-advert", "ipv6 router advert"));
 
     var output  = chain_base("output",  CHAIN_FILTER, HOOK_OUTPUT,  0, POLICY_ACCEPT);
     var forward = chain_base("forward", CHAIN_FILTER, HOOK_FORWARD, 0, POLICY_DROP);
@@ -156,17 +225,26 @@ fn aegis_hardened_host() {
 }
 
 # ----------------------------------------------------------------
-# Render passthrough so consumers can grab the nftables source via
-# the aegis surface without taking a direct nein dep themselves.
-# Returns a Str* with the full ruleset (text form).
+# Render so consumers can grab the nftables source via the aegis
+# surface without taking a direct nein dep themselves. Returns a Str*
+# with the full ruleset (text form), or 0 when fw is 0 or does not
+# validate — ADR 0006: rendering refuses rather than emits. Through
+# 1.2.1 this was a passthrough that rendered whatever it was handed,
+# and segfaulted on the builders' own 0 (F-41).
 # ----------------------------------------------------------------
-fn aegis_firewall_render(fw) { return firewall_render(fw); }
+fn aegis_firewall_render(fw) {
+    if (fw == 0) { return 0; }
+    var rt, rv = firewall_render_checked(fw);
+    if (is_err_result(rt) == 1) { return 0; }
+    return rv;
+}
 
 # nein returns a tagged Result (Ok(0) / Err(code)); aegis surfaces
 # 0 = ok, 1 = invalid for boundary uniformity with the rest of the
 # library (cstrs in, plain ints out). Consumers that need the raw
 # error code can call firewall_validate directly via the dist bundle.
 fn aegis_firewall_validate(fw) {
+    if (fw == 0) { return 1; }
     if (is_err_result(firewall_validate(fw)) == 1) { return 1; }
     return 0;
 }

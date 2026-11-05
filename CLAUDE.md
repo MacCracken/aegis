@@ -53,7 +53,7 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 - **ONE change at a time** — never bundle unrelated changes.
 - Build with `cyrius build`, not raw `cat file | cc5` — the manifest auto-resolves deps.
 - Source files only need project includes — stdlib auto-resolves from `cyrius.cyml`.
-- `var buf[N]` = N **bytes**, not N entries. **Function-scope `var buf[N]` is static data** — consecutive calls share the backing memory; alloc on the heap if the buffer's contents need to outlive the call.
+- `var buf[N]` = N **bytes**, not N entries. **Function-scope `var buf[N]` is per-call stack storage** (since cyrius 6.3.15) up to the per-fn frame budget (~120 KB); over it the compiler warns and the buffer falls back to **static storage shared by every call and thread** — use `alloc()` instead. Either way it does not outlive the call: alloc on the heap if its contents must.
 - For non-obvious cyrius-implementation constraints surfaced during the port, see [`docs/architecture/001-cyrius-port-gaps.md`](docs/architecture/001-cyrius-port-gaps.md).
 
 ## Rules (Hard Constraints)
@@ -70,7 +70,7 @@ cyrius bench tests/aegis.bcyr            # run benchmarks
 
 ### P(-1): Hardening (before features and at minor cuts)
 
-Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. The second pass ran at 1.1.6 (`docs/audit/2026-08-24-audit.md`) — 18 findings, and the first audit of `src/pam.cyr`. Subsequent runs pair with each minor cut.
+Aegis ran the original P(-1) pass during 0.5–0.8.x; the pre-1.0 hardening cycle (0.9.3 → 0.9.5) closed the audit at `docs/audit/2026-05-10-audit.md`. The second pass ran at 1.1.6 (`docs/audit/2026-08-24-audit.md`) — 18 findings, and the first audit of `src/pam.cyr`. The third ran at 1.2.2 (`docs/audit/2026-11-04-audit.md`) — 21 findings; its lesson is to run each claim against the real thing (aarch64 under qemu, `nft -c`, Linux-PAM's own parser), not just read aegis. Subsequent runs pair with each minor cut.
 
 1. **Cleanliness** — `./scripts/audit.sh` green; `cyrius lint`, `cyrius vet`, `cyrius fmt --check` clean. (`cyrius fmt <file>` without `--check` rewrites in place from 6.5.x on — use `--check` in any gate.)
 2. **Benchmark baseline** — `cyrius bench tests/aegis.bcyr`; append to `bench-history.csv`.

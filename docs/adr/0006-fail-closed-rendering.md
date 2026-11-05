@@ -82,3 +82,21 @@ guarantee that no code path can skip it.
   a newline" that Linux-PAM would read back as one field, so the value is not
   representable and rejecting it is the honest answer.
 - **Skip invalid rules and render the rest.** Rejected as unsafe — see above.
+
+## Update — 1.2.2
+
+The firewall half now holds to this ADR as well, which it had not
+(`docs/audit/2026-11-04-audit.md` F-38..F-41):
+
+- **`aegis_firewall_render` validates before it emits.** Through 1.2.1 it was
+  a passthrough to nein's `firewall_render`. It now goes through
+  `firewall_render_checked` and returns `0` for a firewall that does not
+  validate, and for `0` itself, which used to segfault.
+- **"Allowlist" was not enough at the firewall seam.** `agent_addr` passed a
+  character allowlist (`[0-9a-fA-F:./]`), yet `dead.beef` is a host name nft
+  resolves through DNS, and `0.0.0.0/0` drops all traffic. For text that
+  another program parses, the allowlist must be that program's grammar. The
+  builders therefore also call nein's `validate_addr` and `validate_nft_name`
+  (nein 1.9.1 probes both against nft itself) and require a single-host
+  address. The same lesson drove the PAM side of the pass: aegis now
+  assembles lines exactly as Linux-PAM's `pam_line.c` does (F-44).

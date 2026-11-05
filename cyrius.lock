@@ -1,8 +1,8 @@
 commit	e6d33aa3c10355921e85cac1734dc49841f53e5f	agnostik	https://github.com/MacCracken/agnostik.git	2.0.0
-commit	0de2037b8428811950672a028a694abc12ef2fd7	bote-core	https://github.com/MacCracken/bote.git	3.8.0
+commit	81c12232fef208740f291b92d1f5138d3d05d7a4	bote-core	https://github.com/MacCracken/bote.git	3.8.9
 commit	f4a31a450a112587d6fcc46a946e1b6061878e6f	libro	https://github.com/MacCracken/libro.git	2.11.3
 commit	40b827f275c452f592e0735b19b0cb47448c2794	majra	https://github.com/MacCracken/majra.git	2.13.0
-commit	3bd9eaa693e51cecd1ed72e2e76e4757f27d1235	nein	https://github.com/MacCracken/nein.git	1.9.0
+commit	aab55de52140a5c68964efa66bf485e30720d35f	nein	https://github.com/MacCracken/nein.git	1.9.1
 commit	efa2e34aefcb1dc65a01e734b2b19bfe18b10c7f	patra	https://github.com/MacCracken/patra.git	1.16.6
 commit	3c47656154ecd4b07abee1f8b174b2389bb83a8b	sigil	https://github.com/MacCracken/sigil.git	3.13.15
 906bddefd55b5c897a37135f3b66b09e73b6f41ec984b0d2286580c69263c2c5  lib/agnostik_error.cyr
@@ -20,7 +20,7 @@ ffe65f4fd1d1b181dbdacd24f5e0d31118de6c6a96fc3840c7ad8ecde55a9053  lib/agnostik_t
 23516d97b8eb5ba1c7a1b6e34a89b3b0653f68d858edca8521a7ccce5a06bce5  lib/atomic.cyr
 233e7263692ab65ca4dab7bb98aae0ddc0fa3cc937c87ca8ff96326d3f0ae20e  lib/bayan.cyr
 cd9321d9400401cd8895d1f488d969ea391a1194b327f7a1fa60b99912b73cf2  lib/bench.cyr
-9f1b8f16d0f0bd715f74d5d5874a3e2c25d85df71d653f18251ba8220da8a0df  lib/bote-core.cyr
+324a6565e9a7a17696c4187fdc9a9330685511f19fae17921f94f205d65dca03  lib/bote-core.cyr
 b99081e633d572569ee63c6a915fe4aa39b3ac4ff5665c08cc4c9416ed2f6928  lib/boxed.cyr
 2e2e802085112d781225c517fca853b4adbf29850a96b21b6ff32469f0736516  lib/chrono.cyr
 096eabc580c807f3e378fbe56058780a28cdf95b9c70b44672bca0a71cf969f6  lib/ct.cyr
@@ -37,7 +37,7 @@ f38092748e5a9197f7a526e54801fd15fab70d2a04d1c23f4f71003f564fb3d6  lib/keccak.cyr
 df88b5cf68aa94ddd132cf9a71dc23dcdc325bf418cd5d8c9ec99af9c600358e  lib/majra.cyr
 3a85748ee6bf83fe72bb310f21341c97232649def8c6064213da5502d86888f4  lib/math.cyr
 6390e2b0611636af94078acc9a6122eaaeab59b31c5cffe95bbcbc77d89748e5  lib/mmap.cyr
-2376a140a8f1336129e38b8ee833b4e3e9ce16d0bdafba7b874a59735aed6235  lib/nein.cyr
+7eae810c8dcfd7bd7bb37ac6d9217b867171a616ed661b6f3f33a536dd01cd53  lib/nein.cyr
 4a8f6db7d99bbc2934c3d36e8d440e7e004d9d2b6566a2a59066063c623d721d  lib/patra.cyr
 52d8879572df7a9ab0c5d1b97eb1f41799b06e684c01876d8023f04a4c63ee0d  lib/poison.cyr
 ff8ec116ffc0e13ec3d6b7f217fbf6551b0f34853b847f87dfc81d5d97571305  lib/process.cyr

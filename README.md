@@ -8,12 +8,15 @@ Consumers: **daimon** (security-policy enforcement), **argonaut** (boot hardenin
 
 ## Status
 
-**1.2.1** — current, on cyrius 6.7.18. The public API surface is SemVer-stable:
-additions are non-breaking, removals or renames need a major bump. 1.1.x has been
+**1.2.2** — current, on cyrius 6.7.18. The public API surface is SemVer-stable:
+additions are non-breaking, removals or renames need a major bump. 1.1.x was
 the PAM fold (from the agnosys → agnodrm decomposition), toolchain and dependency
-refreshes, an append-only NDJSON event sink (1.1.7), and — at 1.1.6 — a P(-1)
-hardening pass that closed 18 findings, four of them HIGH. See
-[`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md).
+refreshes, an append-only NDJSON event sink (1.1.7), and a P(-1) hardening pass
+at 1.1.6 (18 findings, [`docs/audit/2026-08-24-audit.md`](docs/audit/2026-08-24-audit.md)).
+1.2.2 is the third pass: 21 findings, 20 fixed. They include an aarch64 build
+that followed symlinks, IPv6 agents that could never be isolated, and a PAM
+parser that disagreed with Linux-PAM. See
+[`docs/audit/2026-11-04-audit.md`](docs/audit/2026-11-04-audit.md).
 
 Shipped surface: nein firewall integration (`aegis_isolate_agent` /
 `aegis_rate_limit_agent` / `aegis_hardened_host` + render/validate wrappers),
@@ -72,7 +75,8 @@ Daemon API (cstrs for `agent_id` / `event_id` / path parameters):
 Firewall (nein integration — `src/firewall.cyr`, exercised via `QA_ISOLATE` / `QA_RATELIMIT` quarantine actions):
 
 - Builders: `aegis_isolate_agent(agent_id, agent_addr)`, `aegis_rate_limit_agent(agent_id, agent_addr, pps)`, `aegis_hardened_host()`
-- Wrappers: `aegis_firewall_render(fw)` returns `Str*` (nftables source); `aegis_firewall_validate(fw)` returns `0` (ok) / `1` (invalid)
+- Builders return `0` for input nft would not parse as one host: a non-literal address, a prefix other than `/32` / `/128`, or an id that makes no nft table name. IPv6 addresses render `ip6 daddr` / `ip6 saddr`.
+- Wrappers: `aegis_firewall_render(fw)` returns `Str*` (nftables source), or `0` for a firewall that does not validate; `aegis_firewall_validate(fw)` returns `0` (ok) / `1` (invalid, including `fw == 0`)
 
 Ring primitive (events log; cap captured at `aegis_new` time — see [ADR 0005](docs/adr/0005-fixed-cap-ring-buffer-events-log.md)):
 
@@ -80,7 +84,7 @@ Ring primitive (events log; cap captured at `aegis_new` time — see [ADR 0005](
 
 JSON serde — every record gains `<name>_to_json` / `<name>_from_json` (rendered) plus `<name>_to_json_v` / `<name>_from_json_v` (typed-value tree). Wire format is consumed by daimon / argonaut; field names are snake_case and enum variants are PascalCase.
 
-The frozen public surface — **214 public fns**, machine-checkable — lives at [`docs/development/api-surface.snapshot`](docs/development/api-surface.snapshot); CI gates additions and removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh). Additions are non-breaking; removals or renames need a major bump.
+The frozen public surface — **217 public fns**, machine-checkable — lives at [`docs/development/api-surface.snapshot`](docs/development/api-surface.snapshot); CI gates additions and removals against it via [`scripts/check-api-surface.sh`](scripts/check-api-surface.sh). Additions are non-breaking; removals or renames need a major bump.
 
 ## Project Layout
 

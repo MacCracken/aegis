@@ -86,6 +86,26 @@ test_out=$(cyrius test tests/aegis.tcyr 2>&1) || {
 }
 echo "$test_out" | tail -2
 
+gate "tests (aarch64, qemu-user)"
+# Mirrors CI. Best-effort locally: needs cycc_aarch64 in the toolchain and
+# qemu-aarch64 on PATH. The x86_64 run above cannot see a per-arch constant
+# (1.2.1's x86_64-only O_NOFOLLOW, docs/audit/2026-11-04-audit.md F-28).
+if [ -x "$HOME/.cyrius/bin/cycc_aarch64" ] && command -v qemu-aarch64 >/dev/null 2>&1; then
+    for t in tests/*.tcyr; do
+        [ -f "$t" ] || continue
+        name=$(basename "$t" .tcyr)
+        CYRIUS_DCE=1 cyrius build --aarch64 "$t" "build/${name}_aarch64" 2>&1 | tail -1
+        arm_out=$(qemu-aarch64 "build/${name}_aarch64" 2>&1) || {
+            echo "$arm_out" | grep -E 'FAIL|passed' | tail -30
+            red "aarch64 tests FAILED"
+            exit 1
+        }
+        echo "$arm_out" | tail -1
+    done
+else
+    printf 'skipped: needs cycc_aarch64 and qemu-aarch64 (CI runs it)\n'
+fi
+
 gate "fuzz"
 for f in tests/*.fcyr; do
     [ -f "$f" ] || continue
@@ -140,7 +160,9 @@ done
 [ "$missing" -eq 0 ] || exit 1
 
 v=$(cat VERSION | tr -d '[:space:]')
-grep -q "$v" CHANGELOG.md || { red "FAIL: version $v not in CHANGELOG.md"; exit 1; }
+# The release heading, not the bare number: "1.2.1" also matches a dep
+# version elsewhere in the file, which is how 1.2.1 passed before its entry.
+grep -qF "## [$v]" CHANGELOG.md || { red "FAIL: no ## [$v] heading in CHANGELOG.md"; exit 1; }
 grep -q '^version = "\${file:VERSION}"' cyrius.cyml || {
     red "FAIL: cyrius.cyml version must be \${file:VERSION}"; exit 1; }
 green "  version $v consistent"

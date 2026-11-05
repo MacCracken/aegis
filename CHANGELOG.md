@@ -7,6 +7,168 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-04
+
+The third P(-1) hardening pass, paired with the 1.2.x minor, and a
+dependency refresh to nein 1.9.1. **21 findings (F-28..F-48): 20 fixed here,
+1 deferred to 1.3.x** (it fails closed). Full report:
+[`docs/audit/2026-11-04-audit.md`](docs/audit/2026-11-04-audit.md). The
+217-fn public surface is unchanged. Several functions now refuse input they
+used to accept, or return 0 where they used to return something unsafe; each
+case is listed under Security.
+
+### Security
+
+- **aarch64: every "no-follow" open followed symlinks (F-28, HIGH).** aegis
+  hardcoded `O_NOFOLLOW = 131072`, the x86_64 value. On arm64 that bit is
+  `O_LARGEFILE`, so the aarch64 release build voided the scanner's F-6 fix and
+  the PAM reads' F-12 fix. The open sites now use the stdlib's per-arch
+  `O_NOFOLLOW`. Confirmed under qemu-aarch64; the existing suite fails 2
+  assertions there on 1.2.1.
+- **An agent with an IPv6 address could never be isolated or rate-limited
+  (F-38, HIGH).** The builders always rendered `ip daddr` / `ip saddr`, which
+  nft refuses for IPv6, so `aegis_firewall_validate` failed for every IPv6
+  agent. They now use `ip6 daddr` / `ip6 saddr` for an IPv6 address.
+- **The firewall builders hold their input to what nft parses (F-39, F-41).**
+  `aegis_isolate_agent` and `aegis_rate_limit_agent` now return 0 for:
+  - an address that is not a literal IPv4 / IPv6 address. Hex-only host names
+    such as `dead.beef` used to pass, and nft resolves those through DNS at
+    apply time;
+  - a prefix other than `/32` or `/128`. `/0` used to validate, and drops all
+    traffic, SSH included;
+  - an agent id whose table name is no nft name (a `.` in the id);
+  - a `pps` above 2³¹−1, whose burst overflows nft's u32.
+
+  `aegis_quarantine_agent` still accepts ids with `.`; only the firewall path
+  refuses them.
+- **`aegis_firewall_render` refuses rather than emits (F-41).** It returns 0
+  for a firewall that does not validate, and for 0 itself, as ADR 0006 already
+  required of every emitter. `aegis_firewall_validate(0)` returns 1. Both used
+  to segfault on the builders' own failure value.
+- **The hardened-host baseline answers IPv6 neighbour discovery (F-40).**
+  Under policy drop it dropped ND, so every IPv6 peer lost the host, SSH
+  included (confirmed across two network namespaces). It gains three rules,
+  for `nd-neighbor-solicit`, `nd-neighbor-advert` and `nd-router-advert`. No
+  existing rule or table name changed.
+- **The event sink refuses a path a privileged appender must not use
+  (F-29).** `aegis_set_event_sink` now returns a negative errno for:
+  - a symlink at the path;
+  - a FIFO (which used to hang startup);
+  - a file another user owns, or one with a second link.
+
+  Before, a symlink planted in a writable log directory aimed root's appends
+  at any file.
+- **A failed or short sink write no longer glues two records together
+  (F-31).** The next record starts with a newline when the file's tail is a
+  fragment, so a reader loses one record, not two. The failure is logged at
+  warn.
+- **The scanners no longer hang on a FIFO, and no longer pass a directory as
+  a clean binary (F-30).** Presence is checked with lstat rather than an open.
+  Anything that is not a regular file gets a new `not_regular_file` finding
+  (THREAT_HIGH). A dangling symlink now reports `unreadable_metadata` rather
+  than `missing_binary`.
+- **The PostgreSQL socket check fires (F-32).** It opened the socket, which
+  fails with ENXIO for every UNIX socket, so `check_socket_permissions` never
+  did anything. It now lstats the path and judges a socket only.
+- **A JSON key of the wrong type keeps the safe default (F-33).** Through
+  1.2.1, `"quarantine_on_critical": 1` (or `"true"`, or `null`) turned
+  auto-quarantine off. Bools must now be JSON bools and clamped fields JSON
+  numbers; anything else is treated as absent. `dbpolicy_from_json` now starts
+  from `database_security_policy_default()`, as `aegis_config_from_json` has
+  since 1.1.6. A partial policy used to switch off `audit_ddl` and
+  `check_socket_permissions`, empty both data-dir paths and disable the
+  connection ceiling.
+- **An empty `agent_id` is an anonymous event (F-34).** `""` used to be
+  stored, auto-quarantined under the key `""`, and then refused by release.
+- **An embedded NUL no longer passes the agent_id whitelist (F-35).** For
+  example `"good\u0000; flush ruleset"` from JSON is now treated as no
+  agent_id.
+- **PAM: what aegis audits is what Linux-PAM loads (F-44).**
+  `pam_parse_config` now assembles lines the way Linux-PAM's `pam_line.c`
+  does:
+  - a trailing `\` joins the next line;
+  - `#` anywhere starts a comment;
+  - a file that ends inside a continuation is an error.
+
+  Before, `auth optional pam_permit.so \` followed by `auth required
+  pam_unix.so` was audited as two rules. Linux-PAM loads it as one optional
+  `pam_permit`, which needs no password.
+- **PAM: security files over the cap are refused, not truncated (F-42).**
+  An 8 KB comment used to push a `required pam_deny.so` line past the read cap
+  and the file parsed Ok without it. Reads of `/etc/pam.d/<service>` and
+  `/etc/passwd` now return Err for a file over the cap, one that changes size
+  mid-read, or a read error. To keep real hosts from failing, the caps rise
+  from 8 KB / 64 KB to 256 KB / 16 MB, with buffers sized from fstat.
+- **PAM: an overflowing uid no longer parses as root (F-43).**
+  `18446744073709551616` wrapped to uid 0. uid and gid must now be 1–10 digits
+  and at most 4294967294.
+- **PAM: `pam_validate_rule` range-checks type, control and optional (F-45),
+  and requires a bracket control to be one `[...]` group (F-46).**
+  `[success=ok] x` used to validate, and Linux-PAM loads `x` as the module.
+
+### Fixed
+
+- **`stats_threat_count` is bounds-checked (F-36)**, like
+  `aegis_threat_count` since 1.1.6. Level -1 used to return `scans_completed`.
+- **`aegis_report_event` no longer builds log lines its level drops (F-37).**
+  `aegis_report_event` 3.381 → **2.499 µs** (−26%) in the bench, which logs at
+  `SK_ERROR`.
+
+### Changed
+
+- **nein `1.9.0` → `1.9.1`**, the latest release. It validates names and
+  addresses against nft's own grammar (`validate_nft_name`, a stricter
+  `validate_addr`), which is what aegis's builders now call. Interface names
+  in flowtables and sets render quoted; aegis uses neither. No consumer
+  contract changes.
+- **bote-core `3.8.0` → `3.8.9`**, following nein 1.9.1's pin. bote has
+  tagged 3.8.11; aegis declares no transitives, so bote-core stays at nein's
+  pin. Every other transitive (libro, majra, sigil, patra) is unchanged and
+  at its latest release. agnostik stays at 2.0.0, its latest. Toolchain stays
+  at 6.7.18, the latest.
+- **`cyrius.lock` regenerated from the tags**: 7 commit pins, 70 files.
+  `--verify` reports 70 / 0 and `--locked` is clean.
+- **CI and `scripts/audit.sh` run the test suite on aarch64 under
+  qemu-user (F-48)**, with the same skip rule as the cross-build. Releases are
+  gated too, since `release.yml` calls `ci.yml`.
+- **The version gate requires a `## [X.Y.Z]` heading (F-48).** The old check
+  matched any substring.
+- **CI's lint step no longer exits before printing (F-48).** It carries the
+  `|| true` that `audit.sh` has.
+- **CLAUDE.md: function-scope `var buf[N]` is per-call stack storage** up to
+  the ~120 KB frame budget since cyrius 6.3.15, not static data. Confirmed
+  with a recursion probe; CI's scan comment is corrected too.
+
+### Deferred
+
+- **F-47 — PAM grammar coverage.** These make `pam_parse_config` return Err
+  for the whole file:
+  - upper-case keywords;
+  - `substack` (Fedora/RHEL);
+  - `@include` (Debian);
+  - authselect's symlinked `system-auth`.
+
+  This fails closed: aegis refuses the file rather than misreading it. It
+  needs new public constants, so it is a 1.3.x item (roadmap).
+
+### Verified
+
+- **`./scripts/audit.sh` green on every gate:**
+  - api-surface matches the 217-fn snapshot;
+  - tests **533 / 533**, on x86_64 and under qemu-aarch64;
+  - fuzz, bench, security scan and the docs gate all pass.
+- **Every new test group fails against the 1.2.1 sources**, each on its own
+  finding: 50 assertions fail, `aegis_firewall_validate(0)` segfaults, and a
+  FIFO scan and a FIFO sink both hang until `timeout` kills them.
+- **Rendered rulesets pass a real `nft -c`** (1.1.7, unprivileged namespace):
+  - hardened host;
+  - IPv4 and IPv6 isolate;
+  - IPv4 and IPv6 rate limit, including `pps` 2³¹−1.
+- **IPv6 TCP/22 between two network namespaces** fails under the 1.2.1
+  hardened-host ruleset and connects under 1.2.2's.
+- **The daemon builds with zero warnings for x86_64, aarch64 and agnos.**
+  `docs/examples/basic_consumer.cyr` builds and runs.
+
 ## [1.2.1] - 2026-11-03
 
 Toolchain and dependency refresh to cyrius 6.7.18, every dependency at its

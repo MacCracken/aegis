@@ -1065,6 +1065,21 @@ fn main() {
     test_p16_pam_passwd_rejects_non_numeric_uid();
     test_p16_pam_parse_real_world_grammar();
     test_p16_pam_misc();
+
+    # ---- 1.2.2 P(-1) ----
+    test_p122_firewall_inputs_validate();
+    test_p122_hardened_host_ipv6_nd();
+    test_p122_event_sink_refuses_unsafe_paths();
+    test_p122_event_sink_torn_tail();
+    test_p122_scan_non_regular_paths();
+    test_p122_socket_check_fires();
+    test_p122_json_wrong_type_fails_closed();
+    test_p122_empty_and_nul_agent_id();
+    test_p122_stats_threat_count_bounds();
+    test_p122_pam_line_assembly();
+    test_p122_pam_id_range();
+    test_p122_pam_rule_ranges();
+    test_p122_pam_read_whole();
     return assert_summary();
 }
 
@@ -1240,8 +1255,10 @@ fn test_p1_firewall_accepts_good_input() {
     test_group("p1_firewall_accepts_good_input");
     assert_neq(aegis_isolate_agent("agent-1", "10.0.0.1"), 0,
       "valid IPv4 isolate accepted");
-    assert_neq(aegis_isolate_agent("a.b_c-1", "10.0.0.1/24"), 0,
-      "valid mixed-id + CIDR accepted");
+    # 1.2.2: '.' is out of the firewall path (F-39) and a prefix must name
+    # one host (F-41), so the mixed id drops '.' and the CIDR is a /32.
+    assert_neq(aegis_isolate_agent("a_b-c1", "10.0.0.1/32"), 0,
+      "valid mixed-id + host CIDR accepted");
     assert_neq(aegis_isolate_agent("agent-1", "fe80::1"), 0,
       "valid IPv6 accepted");
     assert_neq(aegis_isolate_agent("agent-1", "fe80::1/128"), 0,
@@ -1396,8 +1413,8 @@ fn test_p1_scan_refuses_to_follow_symlink() {
     assert_eq(scan_clean(r1), 1, "real file scans clean");
 
     # F-6: scanning the symlink path → "unreadable_metadata" finding.
-    # file_exists() still follows the symlink (uses bare open) so the
-    # file "exists", but _aegis_stat_modesize now refuses to follow
+    # _aegis_path_present() lstats the path, so the link "exists", but
+    # _aegis_stat_modesize refuses to follow
     # — open(O_NOFOLLOW) returns -ELOOP, fstat never runs, metadata is
     # marked unreadable. The scan is non-clean and the finding signals
     # the consumer to investigate without aegis having dereferenced
@@ -1753,6 +1770,345 @@ fn test_event_sink_ndjson() {
     assert(n2 > n, "reopening appends rather than truncating");
 
     sys_unlink(path);
+    return 0;
+}
+
+# ================================================================
+# 1.2.2 P(-1) hardening regressions — docs/audit/2026-11-04-audit.md
+# ================================================================
+
+# F-38 / F-39 / F-41: every firewall a builder returns must validate. The
+# 1.0 good-input test only checked for a non-null pointer, which is how an
+# IPv6 isolate that nft refuses passed for a year.
+fn test_p122_firewall_inputs_validate() {
+    test_group("p122_firewall_inputs_validate");
+    assert_eq(aegis_firewall_validate(aegis_isolate_agent("agent-1", "10.0.0.1")), 0,
+      "IPv4 isolate validates");
+    assert_eq(aegis_firewall_validate(aegis_isolate_agent("agent-1", "10.0.0.1/32")), 0,
+      "IPv4 /32 isolate validates");
+    var fw6 = aegis_isolate_agent("agent-1", "fd00::1");
+    assert_eq(aegis_firewall_validate(fw6), 0, "IPv6 isolate validates (F-38)");
+    var r6 = aegis_firewall_render(fw6);
+    assert_neq(r6, 0, "IPv6 isolate renders");
+    _fw_assert_contains(r6, "ip6 daddr fd00::1", "IPv6 input rule matches ip6 daddr");
+    _fw_assert_contains(r6, "ip6 saddr fd00::1", "IPv6 output rule matches ip6 saddr");
+    assert_eq(aegis_firewall_validate(aegis_rate_limit_agent("agent-1", "fe80::1/128", 100)), 0,
+      "IPv6 rate limit validates (F-38)");
+    var big = aegis_rate_limit_agent("agent-1", "10.0.0.1", 2147483647);
+    assert_eq(aegis_firewall_validate(big), 0, "largest pps validates");
+
+    assert_eq(aegis_isolate_agent("a.b", "10.0.0.1"), 0,
+      "id with '.' refused: its table name is no nft name (F-39)");
+    assert_eq(aegis_isolate_agent("agent-1", "dead.beef"), 0,
+      "hex host name refused: nft would resolve it through DNS (F-41)");
+    assert_eq(aegis_isolate_agent("agent-1", "999.1.1.1"), 0, "out-of-range quad refused");
+    assert_eq(aegis_isolate_agent("agent-1", "::::"), 0, "malformed IPv6 refused");
+    assert_eq(aegis_isolate_agent("agent-1", "10.0.0.0/24"), 0, "network prefix refused");
+    assert_eq(aegis_isolate_agent("agent-1", "0.0.0.0/0"), 0, "/0 refused: it drops all traffic");
+    assert_eq(aegis_isolate_agent("agent-1", "fd00::/64"), 0, "IPv6 network prefix refused");
+    assert_eq(aegis_rate_limit_agent("agent-1", "10.0.0.1", 2147483648), 0,
+      "pps whose burst overflows u32 refused");
+    assert_eq(aegis_firewall_validate(0), 1, "validate(0) reports invalid instead of crashing");
+    assert_eq(aegis_firewall_render(0), 0, "render(0) returns 0 instead of crashing");
+    return 0;
+}
+
+# F-40: under policy drop the host must still answer neighbour discovery,
+# or every IPv6 peer (SSH included) loses it.
+fn test_p122_hardened_host_ipv6_nd() {
+    test_group("p122_hardened_host_ipv6_nd");
+    var fw = aegis_hardened_host();
+    assert_eq(aegis_firewall_validate(fw), 0, "hardened host validates");
+    var r = aegis_firewall_render(fw);
+    _fw_assert_contains(r, "icmpv6 type nd-neighbor-solicit", "neighbour solicit accepted");
+    _fw_assert_contains(r, "icmpv6 type nd-neighbor-advert", "neighbour advert accepted");
+    _fw_assert_contains(r, "icmpv6 type nd-router-advert", "router advert accepted");
+    _fw_assert_contains(r, "icmp type echo-request", "IPv4 ping rule still there");
+    return 0;
+}
+
+# F-29: the privileged appender refuses a path that would aim it elsewhere.
+fn test_p122_event_sink_refuses_unsafe_paths() {
+    test_group("p122_event_sink_refuses_unsafe_paths");
+    var target = "/tmp/aegis_p122_sink_target";
+    var link   = "/tmp/aegis_p122_sink_link";
+    var fifo   = "/tmp/aegis_p122_sink_fifo";
+    var hard   = "/tmp/aegis_p122_sink_hard";
+    _tmp_unlink(target);
+    _tmp_unlink(link);
+    _tmp_unlink(fifo);
+    _tmp_unlink(hard);
+    _tmp_write(target, "{}\n", 0x180);
+
+    assert_eq(sys_symlink(target, link), 0, "symlink created");
+    assert(aegis_set_event_sink(link) < 0, "symlink at the sink path refused (F-29)");
+    assert_eq(aegis_event_sink_active(), 0, "no sink after a refusal");
+
+    assert_eq(sys_mknodat(0 - 100, fifo, 4096 | 0x180, 0), 0, "fifo created");
+    assert(aegis_set_event_sink(fifo) < 0, "FIFO refused, and the open did not block");
+
+    assert_eq(sys_link(target, hard), 0, "hard link created");
+    assert(aegis_set_event_sink(hard) < 0, "a path with a second link refused");
+    _tmp_unlink(hard);
+
+    assert_eq(aegis_set_event_sink(target), 0, "a regular file we own, one link, accepted");
+    aegis_close_event_sink();
+    _tmp_unlink(link);
+    _tmp_unlink(fifo);
+    _tmp_unlink(target);
+    return 0;
+}
+
+# F-31: a sink whose tail is a fragment gets a newline before the next
+# record, so the fragment ends as its own line and the record is whole.
+fn test_p122_event_sink_torn_tail() {
+    test_group("p122_event_sink_torn_tail");
+    var path = "/tmp/aegis_p122_torn.jsonl";
+    _tmp_unlink(path);
+    _tmp_write(path, "{\"partial", 0x180);
+    assert_eq(aegis_set_event_sink(path), 0, "sink opens on a file ending mid-record");
+    var d = aegis_new(aegis_config_default());
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "unit", 0, THREAT_LOW, "after torn"));
+    aegis_close_event_sink();
+    var buf[4096];
+    var n = file_read_all(path, &buf, 4095);
+    assert(n > 10, "record appended");
+    assert_eq(load8(&buf + 9), 10, "a newline ends the fragment (F-31)");
+    assert_eq(load8(&buf + 10), 123, "the record starts its own line");
+    assert_eq(load8(&buf + n - 1), 10, "and ends with a newline");
+
+    # A clean tail gets no extra blank line.
+    _tmp_unlink(path);
+    _tmp_write(path, "{}\n", 0x180);
+    assert_eq(aegis_set_event_sink(path), 0, "sink opens on a clean file");
+    aegis_report_event(d, security_event_new(EV_POLICY_VIOLATION, "unit", 0, THREAT_LOW, "after clean"));
+    aegis_close_event_sink();
+    var buf2[4096];
+    var n2 = file_read_all(path, &buf2, 4095);
+    assert(n2 > 3, "record appended after a clean tail");
+    assert_eq(load8(&buf2 + 3), 123, "no blank line after a clean tail");
+    _tmp_unlink(path);
+    return 0;
+}
+
+# F-30: a FIFO at a scan path hung the daemon; a directory scanned clean.
+fn test_p122_scan_non_regular_paths() {
+    test_group("p122_scan_non_regular_paths");
+    var d = aegis_new(aegis_config_default());
+    var fifo = "/tmp/aegis_p122_scan_fifo";
+    var dangling = "/tmp/aegis_p122_dangling";
+    var nowhere = "/tmp/aegis_p122_nowhere";
+    _tmp_unlink(fifo);
+    _tmp_unlink(dangling);
+    _tmp_unlink(nowhere);
+    assert_eq(sys_mknodat(0 - 100, fifo, 4096 | 0x1A4, 0), 0, "fifo created");
+    var r1 = aegis_scan_agent(d, "agent-fifo", fifo);
+    assert_eq(_findings_have_category(scan_findings(r1), "not_regular_file"), 1,
+      "a FIFO binary is a finding, not a hang (F-30)");
+    var r2 = aegis_scan_package(d, fifo);
+    assert_eq(_findings_have_category(scan_findings(r2), "not_regular_file"), 1,
+      "a FIFO package too");
+    var r3 = aegis_scan_agent(d, "agent-dir", "/tmp");
+    assert_eq(scan_clean(r3), 0, "a directory no longer scans clean");
+    assert_eq(_findings_have_category(scan_findings(r3), "not_regular_file"), 1,
+      "a directory is not_regular_file");
+    assert_eq(sys_symlink(nowhere, dangling), 0, "dangling symlink created");
+    var r4 = aegis_scan_agent(d, "agent-dangling", dangling);
+    assert_eq(_findings_have_category(scan_findings(r4), "unreadable_metadata"), 1,
+      "a dangling symlink is there but unreadable");
+    var r5 = aegis_scan_agent(d, "agent-missing", nowhere);
+    assert_eq(_findings_have_category(scan_findings(r5), "missing_binary"), 1,
+      "an absent path is still missing_binary");
+    _tmp_unlink(fifo);
+    _tmp_unlink(dangling);
+    return 0;
+}
+
+# F-32: open(2) on a UNIX socket fails with ENXIO, so the check never fired.
+fn test_p122_socket_check_fires() {
+    test_group("p122_socket_check_fires");
+    var path = "/tmp/aegis_p122.sock";
+    _tmp_unlink(path);
+    var fd = sys_socket(1, 1, 0);                       # AF_UNIX, SOCK_STREAM
+    assert(fd >= 0, "socket created");
+    var sa[112];
+    var n = strlen(path);
+    store8(&sa, 1);                                     # sun_family = AF_UNIX
+    store8(&sa + 1, 0);
+    memcpy(&sa + 2, path, n + 1);
+    assert_eq(sys_bind(fd, &sa, 2 + n + 1), 0, "socket bound");
+    sys_chmod(path, 0x1FF);                             # 0777
+    var f1 = vec_new();
+    _aegis_check_socket_at(f1, path);
+    assert_eq(_findings_have_category(f1, "socket_permissions"), 1,
+      "a world-writable socket is a finding (F-32)");
+    sys_chmod(path, 0x1C0);                             # 0700
+    var f2 = vec_new();
+    _aegis_check_socket_at(f2, path);
+    assert_eq(vec_len(f2), 0, "an owner-only socket is not");
+    var f3 = vec_new();
+    _aegis_check_socket_at(f3, "/tmp");
+    assert_eq(vec_len(f3), 0, "a non-socket is not judged");
+    sys_close(fd);
+    _tmp_unlink(path);
+    return 0;
+}
+
+# F-33: a present key of the wrong type keeps the default, as an absent
+# one does (F-13), and the DB policy reader starts from the defaults.
+fn test_p122_json_wrong_type_fails_closed() {
+    test_group("p122_json_wrong_type_fails_closed");
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"quarantine_on_critical\":1,\"quarantine_on_high\":\"true\",");
+    str_builder_add_cstr(sb, "\"scan_on_execute\":null,\"periodic_scan_interval_secs\":\"60\",");
+    str_builder_add_cstr(sb, "\"max_events\":\"5\"}");
+    var c = aegis_config_from_json(str_builder_build(sb));
+    assert_neq(c, 0, "config parses");
+    assert_eq(aegis_config_quarantine_on_critical(c), 1, "an int for a bool keeps the default (F-33)");
+    assert_eq(aegis_config_quarantine_on_high(c), 1, "a string for a bool keeps the default");
+    assert_eq(aegis_config_scan_on_execute(c), 1, "null for a bool keeps the default");
+    assert_eq(aegis_config_periodic_scan_interval_secs(c), 3600, "a string interval keeps the default");
+    assert_eq(aegis_config_max_events(c), 10000, "a string max_events keeps the default");
+    var d = aegis_new(c);
+    var e = security_event_new(EV_POLICY_VIOLATION, "unit", "agent-q", THREAT_CRITICAL, "x");
+    assert_eq(aegis_report_event(d, e), QA_TERMINATE, "CRITICAL still quarantines");
+
+    var p = dbpolicy_from_json(str_from("{\"kernel_tuning\":[]}"));
+    assert_neq(p, 0, "partial policy parses");
+    assert_eq(dbpolicy_check_socket_permissions(p), 1, "absent check_socket_permissions keeps the default");
+    assert_eq(dbpolicy_audit_ddl(p), 1, "absent audit_ddl keeps the default");
+    assert_eq(dbpolicy_max_connections_per_agent(p), 10, "absent connection ceiling keeps the default");
+    assert_streq(str_data(dbpolicy_postgres_data_dir(p)), "/var/lib/postgresql/data",
+      "absent data dir keeps the default");
+    assert_eq(vec_len(dbpolicy_kernel_tuning(p)), 0, "an explicit empty kernel_tuning is honoured");
+    var p2 = dbpolicy_from_json(str_from("{\"audit_ddl\":false}"));
+    assert_eq(dbpolicy_audit_ddl(p2), 0, "an explicit false is honoured");
+    assert_eq(vec_len(dbpolicy_kernel_tuning(p2)), 4, "absent kernel_tuning keeps the default four");
+    return 0;
+}
+
+# F-34 / F-35: "" and an id with an embedded NUL are no agent at all.
+fn test_p122_empty_and_nul_agent_id() {
+    test_group("p122_empty_and_nul_agent_id");
+    var d = aegis_new(aegis_config_default());
+    var e = security_event_new(EV_POLICY_VIOLATION, "unit", "", THREAT_CRITICAL, "empty id");
+    assert_eq(event_agent_id(e), 0, "an empty agent_id is None (F-34)");
+    assert_eq(aegis_report_event(d, e), QA_NONE, "no quarantine for an anonymous event");
+    assert_eq(stats_quarantined_agents(aegis_stats(d)), 0, "no entry keyed \"\"");
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent_id\":\"\",\"source\":\"s\",\"description\":\"d\",");
+    str_builder_add_cstr(sb, "\"threat_level\":\"Critical\",\"event_type\":\"PolicyViolation\"}");
+    var ev1 = security_event_from_json(str_builder_build(sb));
+    assert_neq(ev1, 0, "event with an empty agent_id parses");
+    assert_eq(event_agent_id(ev1), 0, "and its agent_id is None");
+
+    var sb2 = str_builder_new();
+    str_builder_add_cstr(sb2, "{\"agent_id\":\"good\\u0000; flush ruleset\",\"source\":\"s\",");
+    str_builder_add_cstr(sb2, "\"description\":\"d\",\"threat_level\":\"Critical\",");
+    str_builder_add_cstr(sb2, "\"event_type\":\"PolicyViolation\"}");
+    var ev2 = security_event_from_json(str_builder_build(sb2));
+    assert_neq(ev2, 0, "event with an embedded NUL parses");
+    assert_eq(event_agent_id(ev2), 0, "an id whose whitelisted prefix hides a NUL is None (F-35)");
+    return 0;
+}
+
+# F-36: the AegisStats accessor gets the bounds check aegis_threat_count has.
+fn test_p122_stats_threat_count_bounds() {
+    test_group("p122_stats_threat_count_bounds");
+    var d = aegis_new(aegis_config_default());
+    aegis_scan_package(d, "/tmp/aegis_p122_nowhere");
+    var s = aegis_stats(d);
+    assert_eq(stats_scans_completed(s), 1, "one scan recorded");
+    assert_eq(stats_threat_count(s, 0 - 1), 0, "level -1 reads 0, not scans_completed (F-36)");
+    assert_eq(stats_threat_count(s, 5), 0, "level 5 reads 0, not past the record");
+    return 0;
+}
+
+# F-44: logical lines are assembled the way Linux-PAM assembles them.
+fn test_p122_pam_line_assembly() {
+    test_group("p122_pam_line_assembly");
+    var t1, r1 = pam_parse_config(str_from("auth optional pam_permit.so \\\nauth required pam_unix.so\n"));
+    assert_eq(is_err_result(t1), 0, "continued config parses");
+    assert_eq(vec_len(r1), 1, "a trailing backslash joins the next line: one rule (F-44)");
+    var x = vec_get(r1, 0);
+    assert_eq(pam_rule_control(x), PAM_CTL_OPTIONAL, "the joined rule is the optional one");
+    assert_streq(str_data(pam_rule_module(x)), "pam_permit.so", "its module is pam_permit.so");
+    assert_eq(vec_len(pam_rule_args(x)), 3, "the next line's words are its arguments");
+
+    var t2, r2 = pam_parse_config(str_from("auth required pam_unix.so nullok # trailing note\n"));
+    assert_eq(is_err_result(t2), 0, "mid-line comment parses");
+    assert_eq(vec_len(pam_rule_args(vec_get(r2, 0))), 1, "a mid-line '#' starts a comment");
+
+    var t3, r3 = pam_parse_config(str_from("auth required pam_unix.so # note \\\nauth required pam_deny.so\n"));
+    assert_eq(is_err_result(t3), 0, "commented backslash parses");
+    assert_eq(vec_len(r3), 2, "a line holding '#' never continues");
+
+    var t4, r4 = pam_parse_config(str_from("auth required pam_unix.so \\\n"));
+    assert_eq(is_err_result(t4), 1, "a file ending inside a continuation is an error");
+
+    var t5, r5 = pam_parse_config(str_from("auth required \\\n\n  pam_unix.so\n"));
+    assert_eq(is_err_result(t5), 1, "a blank line ends the continuation, leaving no module");
+    return 0;
+}
+
+# F-43: a uid / gid must be one the kernel can hold.
+fn test_p122_pam_id_range() {
+    test_group("p122_pam_id_range");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("m:x:18446744073709551616:1000::/h:/bin/sh"))), 1,
+      "2^64 uid refused: it wrapped to 0, root (F-43)");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("m:x:9223372036854775808:1000::/h:/bin/sh"))), 1,
+      "2^63 uid refused");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("m:x:4294967295:1000::/h:/bin/sh"))), 1,
+      "(uid_t)-1 refused");
+    assert_eq(is_err_result(pam_parse_passwd_line(str_from("m:x:1000:18446744073709551616::/h:/bin/sh"))), 1,
+      "2^64 gid refused");
+    var tag, u = pam_parse_passwd_line(str_from("m:x:4294967294:1000::/h:/bin/sh"));
+    assert_eq(is_err_result(tag), 0, "largest valid uid parses");
+    assert_eq(pam_user_uid(u), 4294967294, "its value is kept");
+    assert_eq(pam_user_is_system(u), 0, "and it is not a system user");
+    return 0;
+}
+
+# F-45 / F-46: what renders is what Linux-PAM reads.
+fn test_p122_pam_rule_ranges() {
+    test_group("p122_pam_rule_ranges");
+    var bt = pam_rule_new(99, PAM_CTL_REQUIRED, str_from("pam_unix.so"), vec_new());
+    assert_eq(is_err_result(pam_validate_rule(bt)), 1, "out-of-range type refused (F-45)");
+    assert_eq(pam_render_rule(bt), 0, "and not rendered");
+    var bc = pam_rule_new(PAM_TYPE_AUTH, 77, str_from("pam_unix.so"), vec_new());
+    assert_eq(is_err_result(pam_validate_rule(bc)), 1, "out-of-range control refused");
+    var bo = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_REQUIRED, str_from("pam_unix.so"), vec_new());
+    pam_rule_set_optional(bo, 2);
+    assert_eq(is_err_result(pam_validate_rule(bo)), 1, "optional other than 0/1 refused");
+
+    var bb = pam_rule_new(PAM_TYPE_AUTH, PAM_CTL_BRACKET, str_from("pam_unix.so"), vec_new());
+    pam_rule_set_control_text(bb, str_from("[success=ok] x"));
+    assert_eq(is_err_result(pam_validate_rule(bb)), 1,
+      "text after the bracket refused: Linux-PAM would load it as the module (F-46)");
+    pam_rule_set_control_text(bb, str_from("[success=ok]"));
+    assert_eq(is_err_result(pam_validate_rule(bb)), 0, "one bracket group validates");
+
+    var tt, tr = pam_parse_config(str_from("auth [a]b] pam_unix.so\n"));
+    assert_eq(is_err_result(tt), 1, "a control with a bracket inside does not parse");
+    return 0;
+}
+
+# F-42: a security file larger than its cap is refused, not truncated.
+fn test_p122_pam_read_whole() {
+    test_group("p122_pam_read_whole");
+    var path = "/tmp/aegis_p122_pamread";
+    _tmp_unlink(path);
+    _tmp_write(path, "0123456789", 0x1A4);
+    var fd = sys_open(path, O_RDONLY | O_CLOEXEC, 0);
+    var s1 = _pam_read_whole(fd, 10);
+    sys_close(fd);
+    assert_neq(s1, 0, "a file at the cap is read");
+    assert_eq(str_len(s1), 10, "whole");
+    var fd2 = sys_open(path, O_RDONLY | O_CLOEXEC, 0);
+    assert_eq(_pam_read_whole(fd2, 9), 0, "a file over the cap is refused, not truncated (F-42)");
+    sys_close(fd2);
+    _tmp_unlink(path);
     return 0;
 }
 

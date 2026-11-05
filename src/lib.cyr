@@ -201,20 +201,21 @@ fn aegis_next_id() {
 # ================================================================
 var SECURITY_EVENT_SIZE = 72;
 
-# `agent_id_cstr` may be 0 to mean None (Option::None). Otherwise
+# `agent_id_cstr` may be 0 or "" to mean None (Option::None). Otherwise
 # it's a null-terminated cstr that gets wrapped in a Str* for storage.
-# F-7 (0.9.4): non-null agent_id_cstr must pass the whitelist; an
+# F-7 (0.9.4): a non-empty agent_id_cstr must pass the whitelist; an
 # invalid id forces the event to anonymous (aid stays 0). The event
 # is still recorded — silently dropping events would mask attack
 # attempts. The downstream auto-quarantine path then short-circuits
 # (no agent_id → no quarantine), which matches existing semantics.
+# F-34 (1.2.2): "" is None too. Through 1.2.1 it was stored as an empty
+# Str, which auto-quarantined the key "" — an entry that the quarantine
+# and release entry points (strict whitelist) then refused to touch.
 fn security_event_new(event_type, source_cstr, agent_id_cstr, threat_level, description_cstr) {
     var e = alloc(SECURITY_EVENT_SIZE);
     var aid_stored = 0;
-    if (_aegis_valid_agent_id_or_empty(agent_id_cstr) == 1) {
-        if (agent_id_cstr != 0) {
-            aid_stored = str_from(agent_id_cstr);
-        }
+    if (_aegis_valid_agent_id(agent_id_cstr) == 1) {
+        aid_stored = str_from(agent_id_cstr);
     }
     store64(e + 0,  aegis_next_id());
     store64(e + 8,  clock_epoch_secs());
@@ -469,12 +470,16 @@ fn aegis_report_event(d, ev) {
 fn _aegis_report_event_inner(d, ev) {
     var threat = event_threat_level(ev);
 
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "security event reported");
-    _aegis_log_kv_str(sb,  "event_id", event_id(ev));
-    _aegis_log_kv_cstr(sb, "threat",   threat_level_label(threat));
-    _aegis_log_kv_cstr(sb, "kind",     event_type_label(event_kind(ev)));
-    _aegis_log_emit_info(sb);
+    # Built only when it will be emitted (F-37; the debug lines got this
+    # guard at 1.1.6, F-23). This is the hot path.
+    if (_aegis_log_want_info() == 1) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "security event reported");
+        _aegis_log_kv_str(sb,  "event_id", event_id(ev));
+        _aegis_log_kv_cstr(sb, "threat",   threat_level_label(threat));
+        _aegis_log_kv_cstr(sb, "kind",     event_type_label(event_kind(ev)));
+        _aegis_log_emit_info(sb);
+    }
 
     # 1.1.7: also append the event to the NDJSON sink when one is configured.
     # This is what makes events consumable by another process; the sakshi line
@@ -496,11 +501,13 @@ fn _aegis_report_event_inner(d, ev) {
 
     var aid_str = event_agent_id(ev);
     if (aid_str == 0) {
-        var sbw = str_builder_new();
-        str_builder_add_cstr(sbw, "auto-quarantine skipped: no agent_id");
-        _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
-        _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
-        _aegis_log_emit_warn(sbw);
+        if (_aegis_log_want_warn() == 1) {
+            var sbw = str_builder_new();
+            str_builder_add_cstr(sbw, "auto-quarantine skipped: no agent_id");
+            _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
+            _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
+            _aegis_log_emit_warn(sbw);
+        }
         return QA_NONE;
     }
 
@@ -524,12 +531,14 @@ fn _aegis_report_event_inner(d, ev) {
             q_set_threat_level(existing, threat);
         }
     } else {
-        var sbw = str_builder_new();
-        str_builder_add_cstr(sbw, "auto-quarantining agent");
-        _aegis_log_kv_cstr(sbw, "agent_id", aid_cstr);
-        _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
-        _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
-        _aegis_log_emit_warn(sbw);
+        if (_aegis_log_want_warn() == 1) {
+            var sbw = str_builder_new();
+            str_builder_add_cstr(sbw, "auto-quarantining agent");
+            _aegis_log_kv_cstr(sbw, "agent_id", aid_cstr);
+            _aegis_log_kv_cstr(sbw, "threat",   threat_level_label(threat));
+            _aegis_log_kv_str(sbw,  "event_id", event_id(ev));
+            _aegis_log_emit_warn(sbw);
+        }
         var entry = _aegis_make_quarantine_entry(d, aid_cstr, str_data(event_description(ev)), threat, event_id(ev));
         map_set(qmap, aid_cstr, entry);
     }
@@ -958,26 +967,27 @@ fn _aegis_ensure_scan_history(d) {
 # 0.9.5 F-6 fix — refuse to follow symlinks during scans.
 #
 # O_NOFOLLOW (Linux): if the trailing path component is a symlink,
-# open(2) fails with -ELOOP instead of dereferencing. Stable POSIX
-# flag value 0x20000 (= 131072) on every Linux arch aegis targets
-# (x86_64 + aarch64 — verified against include/uapi/asm-generic/
-# fcntl.h). The cyrius stdlib's lib/syscalls_*_linux.cyr exposes
-# O_RDONLY / O_CLOEXEC but not O_NOFOLLOW yet — define locally
-# until that lands upstream, then remove this and use the global.
+# open(2) fails with -ELOOP instead of dereferencing. The value is
+# per-arch — x86_64 0x20000, aarch64 0x8000 (arm64 overrides the
+# asm-generic fcntl.h, and its 0x20000 is O_LARGEFILE) — so it comes
+# from the stdlib's lib/syscalls_*_linux.cyr (6.6.4+; lib/io.cyr on
+# agnos), never a literal. Through 1.2.1 aegis carried the x86_64
+# literal 131072, and the aarch64 build followed every symlink
+# (docs/audit/2026-11-04-audit.md F-28).
 # See docs/audit/2026-05-10-audit.md F-6 for the CWE-367 / CVE-2025-2425
 # (ESET) / CVE-2025-22224 (VMware) / CVE-2024-50379 (Tomcat) class.
-var _AEGIS_O_NOFOLLOW = 131072;
 
-# O_CLOEXEC is exposed by the cyrius Linux / macOS / aarch64 syscall libs
-# but NOT the agnos syscall lib (agnos uses AO_* flags + a divergent
-# sys_open ABI). Define the stable Linux value on the agnos target so the
-# --agnos cross-build resolves the symbol. Guarded agnos-only: an
-# unconditional def would collide with the stdlib enum on Linux (duplicate
-# symbol). NB this is the compile-readiness gate — the agnos sys_open
-# close-on-exec semantics + arg ABI are a runtime concern handled when the
-# agnos stat path is wired (QEMU/iron step), not here.
+# O_CLOEXEC and O_NONBLOCK are exposed by the cyrius Linux / macOS /
+# aarch64 syscall libs but NOT the agnos syscall lib (agnos uses AO_*
+# flags + a divergent sys_open ABI). Define the stable Linux values on the
+# agnos target so the --agnos cross-build resolves the symbols. Guarded
+# agnos-only: an unconditional def would collide with the stdlib enum on
+# Linux (duplicate symbol). NB this is the compile-readiness gate — the
+# agnos sys_open close-on-exec semantics + arg ABI are a runtime concern
+# handled when the agnos stat path is wired (QEMU/iron step), not here.
 #ifdef CYRIUS_TARGET_AGNOS
 var O_CLOEXEC = 524288;
+var O_NONBLOCK = 2048;
 #endif
 
 # --- event sink: append-only NDJSON (1.1.7) ---------------------------
@@ -1000,26 +1010,70 @@ var O_CLOEXEC = 524288;
 # it can be tailed by a pure-syscall reader with no libc — which is what lets
 # chakshu consume it from its no-libc `shu` binary. Newline framing over
 # O_APPEND is what makes it safe without a lock: a reader that stops at the
-# last complete newline can never observe a torn record.
+# last complete newline never observes a record still being written.
 #
 # The record and its newline are written in ONE sys_write. O_APPEND guarantees
 # the offset update and the write are atomic, so concurrent producers interleave
 # whole records, never fragments. Splitting this into two writes would
 # reintroduce exactly the tearing the framing exists to prevent.
-var _AEGIS_O_WRONLY = 1;
-var _AEGIS_O_CREAT  = 64;
-var _AEGIS_O_APPEND = 1024;
-
+#
+# A write can still fail or come up short (disk full, RLIMIT_FSIZE), leaving a
+# fragment with no newline. Through 1.2.1 the next record was glued onto it and
+# a reader lost both. Now the sink remembers it is torn, and the next record
+# starts with a newline, which ends the fragment as a line of its own: one
+# record lost, not two (docs/audit/2026-11-04-audit.md F-31).
 var _aegis_event_fd = 0 - 1;
+var _aegis_event_torn = 0;
 
 # Open (or create) `path_cstr` as the append-only event sink. Mode 0600: events
 # name agents, paths and threat levels, so they are not world-readable by
-# default. Returns 0 on success, or the negative open errno.
+# default. Returns 0 on success, the negative open errno, -EINVAL (-22) when
+# the path is not a regular file, or -EPERM (-1) when it is not ours alone.
+#
+# The daemon that opens this runs privileged, so the path is held to what a
+# privileged appender needs (F-29): O_NOFOLLOW refuses a symlink planted at the
+# path, which would aim the appends at any file; O_NONBLOCK makes a FIFO with
+# no reader fail instead of hanging startup; _aegis_event_sink_check refuses
+# anything else that is not a regular file this process owns with one link.
+# O_RDWR rather than O_WRONLY so the check can read the last byte.
 fn aegis_set_event_sink(path_cstr) {
     aegis_close_event_sink();
-    var fd = sys_open(path_cstr, _AEGIS_O_WRONLY | _AEGIS_O_CREAT | _AEGIS_O_APPEND | O_CLOEXEC, 384);
+    var flags = O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+    var fd = sys_open(path_cstr, flags, 384);
     if (fd < 0) { return fd; }
+    var rc = _aegis_event_sink_check(fd);
+    if (rc < 0) {
+        sys_close(fd);
+        return rc;
+    }
     _aegis_event_fd = fd;
+    return 0;
+}
+
+# A file another user created at the path first stays theirs: they could read
+# the stream and append forged records to it. A second link means the path is
+# a hard link to a file kept elsewhere. A non-empty file whose last byte is not
+# a newline ends in a fragment, so the first record must start a new line.
+fn _aegis_event_sink_check(fd) {
+    var sb[144];
+    if (sys_fstat(fd, &sb) < 0) { return 0 - 22; }
+    var mode = load64(&sb + STAT_MODE) & 0xFFFFFFFF;
+    if ((mode & 0xF000) != 0x8000) { return 0 - 22; }   # S_IFREG
+    #ifndef CYRIUS_TARGET_AGNOS
+    var uid = load64(&sb + STAT_UID) & 0xFFFFFFFF;
+    if (uid != sys_geteuid()) { return 0 - 1; }
+    #endif
+    var nlink = load64(&sb + STAT_NLINK) & 0xFFFFFFFF;
+    if (nlink != 1) { return 0 - 1; }
+    _aegis_event_torn = 0;
+    var size = load64(&sb + STAT_SIZE);
+    if (size > 0) {
+        var last[8];
+        sys_lseek(fd, size - 1, 0);
+        if (sys_read(fd, &last, 1) == 1) {
+            if (load8(&last) != 10) { _aegis_event_torn = 1; }
+        }
+    }
     return 0;
 }
 
@@ -1040,11 +1094,32 @@ fn aegis_event_sink_active() {
 }
 
 # Append one event as a single NDJSON record. No-op when no sink is configured,
-# which is the default — aegis must not create files nobody asked for.
+# which is the default — aegis must not create files nobody asked for. Returns
+# the sys_write result. A failed or short write is logged at warn (F-31).
 fn _aegis_event_sink_write(ev) {
     if (_aegis_event_fd < 0) { return 0; }
-    var line = str_cat(security_event_to_json(ev), str_from("\n"));
-    return sys_write(_aegis_event_fd, str_data(line), str_len(line));
+    var sb = str_builder_new();
+    if (_aegis_event_torn == 1) { str_builder_add_cstr(sb, "\n"); }
+    str_builder_add(sb, security_event_to_json(ev));
+    str_builder_add_cstr(sb, "\n");
+    var line = str_builder_build(sb);
+    var n = str_len(line);
+    var rc = sys_write(_aegis_event_fd, str_data(line), n);
+    if (rc == n) {
+        _aegis_event_torn = 0;
+        return rc;
+    }
+    # A negative rc wrote nothing, so the sink's tail is as it was.
+    if (rc > 0) { _aegis_event_torn = 1; }
+    if (_aegis_log_want_warn() == 1) {
+        var sbw = str_builder_new();
+        str_builder_add_cstr(sbw, "event sink write failed; record dropped");
+        _aegis_log_kv_str(sbw, "event_id", event_id(ev));
+        _aegis_log_kv_int(sbw, "rc", rc);
+        _aegis_log_kv_int(sbw, "len", n);
+        _aegis_log_emit_warn(sbw);
+    }
+    return rc;
 }
 
 # Stat a path WITHOUT following symlinks. Pattern: open(O_RDONLY |
@@ -1059,8 +1134,13 @@ fn _aegis_event_sink_write(ev) {
 # python → python3.11) must canonicalize the path at their own boundary
 # before passing it in. This closes the TOCTOU between aegis's stat
 # and the consumer's action — see CHANGELOG 0.9.5 ### Breaking.
+#
+# O_NONBLOCK (F-30): a FIFO at the path with no writer would otherwise
+# block this open forever, and the daemon with it. The mode written at
+# out+0 keeps its S_IFMT type bits, so callers can tell a FIFO, socket,
+# device or directory from a regular file.
 fn _aegis_stat_modesize(path_cstr, out) {
-    var fd = sys_open(path_cstr, O_RDONLY | O_CLOEXEC | _AEGIS_O_NOFOLLOW, 0);
+    var fd = sys_open(path_cstr, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0);
     if (fd < 0) { return 0; }
     var sb[144];
     var rc = sys_fstat(fd, &sb);
@@ -1071,6 +1151,34 @@ fn _aegis_stat_modesize(path_cstr, out) {
     store64(out,     mode);
     store64(out + 8, size);
     return 1;
+}
+
+# lstat a path into `buf` (STAT_BUFSZ bytes) without opening it: answers
+# "is something there" for a FIFO, socket or dangling symlink, where an
+# open would block, fail with ENXIO, or follow the link. agnos's lstat is
+# length-carrying, like the stdlib's xstat. Returns 0 / negative errno.
+fn _aegis_lstat(path_cstr, buf) {
+    #ifdef CYRIUS_TARGET_AGNOS
+    return sys_lstat(path_cstr, strlen(path_cstr), buf);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    return sys_lstat(path_cstr, buf);
+    #endif
+}
+
+# Is anything at the path? Replaces the stdlib's file_exists at the scan
+# seams (F-30): that one opens the path O_RDONLY, so a FIFO hung the
+# scan and a symlink was followed.
+fn _aegis_path_present(path_cstr) {
+    var sb[144];
+    if (_aegis_lstat(path_cstr, &sb) == 0) { return 1; }
+    return 0;
+}
+
+# 1 when an _aegis_stat_modesize / lstat mode is a regular file.
+fn _aegis_mode_is_reg(mode) {
+    if ((mode & 0xF000) == 0x8000) { return 1; }
+    return 0;
 }
 
 # ================================================================
@@ -1110,7 +1218,7 @@ fn _aegis_scan_agent_inner(d, agent_id_cstr, binary_path_cstr) {
 
     var findings = scan_findings(result);
 
-    if (file_exists(binary_path_cstr) == 0) {
+    if (_aegis_path_present(binary_path_cstr) == 0) {
         var desc_sb = str_builder_new();
         str_builder_add_cstr(desc_sb, "Binary not found at ");
         str_builder_add_cstr(desc_sb, binary_path_cstr);
@@ -1124,7 +1232,16 @@ fn _aegis_scan_agent_inner(d, agent_id_cstr, binary_path_cstr) {
         if (_aegis_stat_modesize(binary_path_cstr, &ms) == 1) {
             var mode = load64(&ms);
             var size = load64(&ms + 8);
-            if (size == 0) {
+            # F-30: a directory, FIFO, socket or device opens fine and used
+            # to pass as a clean binary.
+            if (_aegis_mode_is_reg(mode) == 0) {
+                vec_push(findings, finding_new(
+                    THREAT_HIGH,
+                    str_from("not_regular_file"),
+                    str_from("Agent binary is not a regular file."),
+                    str_from("Point the scan at the binary itself.")));
+            }
+            if (_aegis_mode_is_reg(mode) == 1 && size == 0) {
                 vec_push(findings, finding_new(
                     THREAT_MEDIUM,
                     str_from("empty_binary"),
@@ -1182,7 +1299,7 @@ fn _aegis_scan_package_inner(d, package_path_cstr) {
 
     var findings = scan_findings(result);
 
-    if (file_exists(package_path_cstr) == 0) {
+    if (_aegis_path_present(package_path_cstr) == 0) {
         var desc_sb = str_builder_new();
         str_builder_add_cstr(desc_sb, "Package not found at ");
         str_builder_add_cstr(desc_sb, package_path_cstr);
@@ -1194,8 +1311,16 @@ fn _aegis_scan_package_inner(d, package_path_cstr) {
     } else {
         var ms[16];
         if (_aegis_stat_modesize(package_path_cstr, &ms) == 1) {
+            var mode = load64(&ms);
             var size = load64(&ms + 8);
-            if (size == 0) {
+            if (_aegis_mode_is_reg(mode) == 0) {
+                vec_push(findings, finding_new(
+                    THREAT_HIGH,
+                    str_from("not_regular_file"),
+                    str_from("Package is not a regular file."),
+                    str_from("Point the scan at the package archive itself.")));
+            }
+            if (_aegis_mode_is_reg(mode) == 1 && size == 0) {
                 vec_push(findings, finding_new(
                     THREAT_MEDIUM,
                     str_from("empty_package"),
@@ -1265,7 +1390,10 @@ fn stats_total_events(s)       { return load64(s + 0); }
 fn stats_unresolved_events(s)  { return load64(s + 8); }
 fn stats_quarantined_agents(s) { return load64(s + 16); }
 fn stats_scans_completed(s)    { return load64(s + 24); }
+# Bounds-checked like aegis_threat_count (F-15); this sibling was missed
+# there (F-36): -1 read scans_completed, >= 5 read past the record.
 fn stats_threat_count(s, level) {
+    if (_aegis_threat_level_ok(level) == 0) { return 0; }
     return load64(s + 32 + level * 8);
 }
 
@@ -1388,7 +1516,7 @@ fn _aegis_dbdir_world_accessible_finding(label_cstr, path_str, mode) {
 
 fn _aegis_check_dbdir(findings, label_cstr, path_str) {
     var path_cstr = str_data(path_str);
-    if (file_exists(path_cstr) == 0) { return 0; }
+    if (_aegis_path_present(path_cstr) == 0) { return 0; }
     var ms[16];
     if (_aegis_stat_modesize(path_cstr, &ms) == 0) { return 0; }
     var mode = load64(&ms);
@@ -1398,12 +1526,19 @@ fn _aegis_check_dbdir(findings, label_cstr, path_str) {
     return 0;
 }
 
+# lstat, not open (F-32): open(2) on a UNIX socket fails with ENXIO, so
+# through 1.2.1 both the file_exists pre-check and the open-based stat
+# failed on every real socket and this check never fired. Only a socket
+# is judged — lstat of a symlink reports the link's own 0777.
 fn _aegis_check_pg_socket(findings) {
-    var sock = "/run/postgresql/.s.PGSQL.5432";
-    if (file_exists(sock) == 0) { return 0; }
-    var ms[16];
-    if (_aegis_stat_modesize(sock, &ms) == 0) { return 0; }
-    var mode = load64(&ms);
+    return _aegis_check_socket_at(findings, "/run/postgresql/.s.PGSQL.5432");
+}
+
+fn _aegis_check_socket_at(findings, sock) {
+    var sb[144];
+    if (_aegis_lstat(sock, &sb) != 0) { return 0; }
+    var mode = load64(&sb + STAT_MODE) & 0xFFFFFFFF;
+    if ((mode & 0xF000) != 0xC000) { return 0; }   # S_IFSOCK
     if ((mode & 2) != 0) {
         vec_push(findings, finding_new(
             THREAT_MEDIUM,
@@ -1687,14 +1822,26 @@ fn _aegis_jv_get_int(obj, key_cstr) {
     return json_v_int(v);
 }
 
-# Store a wire bool at `off` only if `key_cstr` is present. Absent keys keep
-# whatever the record already holds — which lets the *_from_json_v readers
-# start from a defaults record and stay fail-closed on omitted switches.
+# Store a wire bool at `off` only if `key_cstr` is present AND a JSON bool.
+# Absent keys keep whatever the record already holds — which lets the
+# *_from_json_v readers start from a defaults record and stay fail-closed on
+# omitted switches. A key of the wrong type is treated as absent (F-33):
+# json_v_bool answers 0 for anything that is not a bool, so through 1.2.1
+# `"quarantine_on_critical": 1` or `"true"` switched enforcement OFF.
 fn _aegis_jv_set_bool_into(obj, key_cstr, rec, off) {
     var v = bayan_json_v_obj_get_by_cstr(obj, key_cstr);
     if (v == 0) { return 0; }
+    if (json_v_is_bool(v) == 0) { return 0; }
     store64(rec + off, json_v_bool(v));
     return 1;
+}
+
+# 1 when a wire value is a JSON number. json_v_int answers 0 for anything
+# else, and 0 is a meaningful setting for several clamped fields (F-33).
+fn _aegis_jv_is_num(v) {
+    if (json_v_is_int(v) == 1) { return 1; }
+    if (json_v_is_float(v) == 1) { return 1; }
+    return 0;
 }
 
 fn _aegis_jv_get_bool(obj, key_cstr) {
@@ -1711,10 +1858,9 @@ fn _aegis_jv_get_bool(obj, key_cstr) {
 # length cap is now defence in depth rather than the only line.
 # Original rationale for the depth-exhaustion DoS class
 # (CVE-2025-52999 Jackson, CVE-2024-57699 json-smart, CVE-2024-21907
-# Newtonsoft, CVE-2024-34155 Go) — lib/json.cyr is recursive and lacks
-# its own depth cap today. 256 KB bounds worst-case nesting at ~131K nodes
-# (depth-N requires ≥ 2N bytes); a real depth cap upstream is tracked for
-# 0.9.5. See docs/audit/2026-05-10-audit.md F-8.
+# Newtonsoft, CVE-2024-34155 Go): the parser is recursive, and at 0.9.3 it
+# had no depth cap. 256 KB bounds worst-case nesting at ~131K nodes
+# (depth-N requires ≥ 2N bytes). See docs/audit/2026-05-10-audit.md F-8.
 var AEGIS_JSON_MAX_BYTES = 262144;
 
 # Returns 1 if json_str (Str*) is small enough to parse; 0 otherwise.
@@ -1896,11 +2042,15 @@ fn aegis_config_from_json_v(v) {
     # 0.9.3 P(-1): clamp ints from the wire — F-1 (max_events DoS),
     # F-4 (auto_release_timeout sentinel collision), F-5 (interval bounds).
     var iv = bayan_json_v_obj_get_by_cstr(v, "periodic_scan_interval_secs");
-    if (iv != 0) { store64(c + 16, _aegis_clamp_interval_secs(json_v_int(iv))); }
+    if (iv != 0) {
+        if (_aegis_jv_is_num(iv) == 1) { store64(c + 16, _aegis_clamp_interval_secs(json_v_int(iv))); }
+    }
     _aegis_jv_set_bool_into(v, "quarantine_on_critical", c, 24);
     _aegis_jv_set_bool_into(v, "quarantine_on_high", c, 32);
     var mev = bayan_json_v_obj_get_by_cstr(v, "max_events");
-    if (mev != 0) { store64(c + 40, _aegis_clamp_max_events(json_v_int(mev))); }
+    if (mev != 0) {
+        if (_aegis_jv_is_num(mev) == 1) { store64(c + 40, _aegis_clamp_max_events(json_v_int(mev))); }
+    }
     var arv = bayan_json_v_obj_get_by_cstr(v, "auto_release_timeout_secs");
     var ar = AEGIS_AUTO_RELEASE_NONE;
     if (arv != 0) {
@@ -1941,20 +2091,26 @@ fn dbpolicy_to_json(p) { return json_v_build(dbpolicy_to_json_v(p)); }
 fn dbpolicy_from_json_v(v) {
     if (v == 0) { return 0; }
     if (json_v_is_obj(v) == 0) { return 0; }
-    var p = alloc(DB_SECURITY_POLICY_SIZE);
+    # Start from the defaults, as aegis_config_from_json_v does (F-13 there,
+    # F-33 here). Through 1.2.1 this started from a zeroed record, so a partial
+    # policy turned off audit_ddl and check_socket_permissions, emptied both
+    # data-dir paths (an empty path is skipped silently), and set the
+    # per-agent connection ceiling to 0, which disables it.
+    var p = database_security_policy_default();
     var pg = _aegis_jv_get_str(v, "postgres_data_dir");
     var rd = _aegis_jv_get_str(v, "redis_data_dir");
-    if (pg == 0) { pg = str_from(""); }
-    if (rd == 0) { rd = str_from(""); }
-    store64(p + 0,  pg);
-    store64(p + 8,  rd);
-    store64(p + 16, _aegis_jv_get_bool(v, "audit_ddl"));
-    store64(p + 24, _aegis_clamp_max_conns(_aegis_jv_get_int(v,  "max_connections_per_agent")));
-    store64(p + 32, _aegis_jv_get_bool(v, "check_socket_permissions"));
-    var kt = vec_new();
+    if (pg != 0) { store64(p + 0, pg); }
+    if (rd != 0) { store64(p + 8, rd); }
+    _aegis_jv_set_bool_into(v, "audit_ddl", p, 16);
+    var mcv = bayan_json_v_obj_get_by_cstr(v, "max_connections_per_agent");
+    if (mcv != 0) {
+        if (_aegis_jv_is_num(mcv) == 1) { store64(p + 24, _aegis_clamp_max_conns(json_v_int(mcv))); }
+    }
+    _aegis_jv_set_bool_into(v, "check_socket_permissions", p, 32);
     var ktv = bayan_json_v_obj_get_by_cstr(v, "kernel_tuning");
     if (ktv != 0) {
         if (json_v_is_arr(ktv) == 1) {
+            var kt = vec_new();
             var n = json_v_arr_len(ktv);
             var i = 0;
             while (i < n) {
@@ -1962,9 +2118,9 @@ fn dbpolicy_from_json_v(v) {
                 if (k != 0) { vec_push(kt, k); }
                 i = i + 1;
             }
+            store64(p + 40, kt);
         }
     }
-    store64(p + 40, kt);
     return p;
 }
 
@@ -2178,8 +2334,14 @@ fn security_event_from_json_v(v) {
             # Same whitelist security_event_new applies (F-7). Without it the
             # serde seam could mint an event whose agent_id the quarantine and
             # release entry points then refuse — an entry nothing can clear.
-            var aid_c = str_data(json_v_str(aid_v));
-            if (_aegis_valid_agent_id_or_empty(aid_c) == 1) { aid = json_v_str(aid_v); }
+            # "" is None (F-34). The whitelist reads a cstr, so a string with
+            # an embedded NUL (`"good\u0000; flush ruleset"`) passed on its
+            # prefix and was stored whole (F-35): the lengths must agree.
+            var aid_s = json_v_str(aid_v);
+            var aid_c = str_data(aid_s);
+            if (_aegis_valid_agent_id(aid_c) == 1) {
+                if (strlen(aid_c) == str_len(aid_s)) { aid = aid_s; }
+            }
         }
     }
     store64(e + 32, aid);
@@ -2236,10 +2398,10 @@ fn security_event_from_json(json_str) {
 # (CVE-2024-43093, CVE-2025-52488 family) — none of those bytes are in
 # the whitelist.
 #
-# The "or empty" variant additionally accepts null / empty cstr — used
-# only by security_event_new where "no agent associated" is a documented
-# valid state (treat as anonymous event). aegis_report_event then short-
-# circuits the auto-quarantine path when agent_id is 0.
+# security_event_new and security_event_from_json_v store no agent_id
+# (None, an anonymous event) for null, empty or invalid input, so
+# aegis_report_event's auto-quarantine path short-circuits on them. The
+# "or empty" variant that let "" through was removed at 1.2.2 (F-34).
 # ================================================================
 
 fn _aegis_valid_agent_id(s) {
@@ -2261,14 +2423,6 @@ fn _aegis_valid_agent_id(s) {
         i = i + 1;
     }
     return 1;
-}
-
-# Same shape, but null/empty pass — for security_event_new where
-# anonymous events (no agent_id) are valid. Non-empty must whitelist.
-fn _aegis_valid_agent_id_or_empty(s) {
-    if (s == 0) { return 1; }
-    if (strlen(s) == 0) { return 1; }
-    return _aegis_valid_agent_id(s);
 }
 
 # agent_addr — pragmatic shape ([0-9a-fA-F:./], length 1..43). Rejects
